@@ -55,7 +55,19 @@ SIZE_MB=$(( APP_MB + APP_MB / 10 + 64 ))
 say "Building ${NAME} ${VERSION} -> $(basename "$OUT") (${SIZE_MB} MB image)"
 
 say "Creating a writable image"
-diskutil image create blank --size "${SIZE_MB}m" --volumeName "$NAME" "$RW" >/dev/null
+# `diskutil image create` is the modern spelling and the one Apple points at,
+# but it is not present on every macOS, and `hdiutil create` is deprecated yet
+# universal. Try the modern one, fall back to the other, so this works on an
+# older build machine as well as a current one.
+rm -f "$RW"
+if diskutil image create blank --size "${SIZE_MB}m" --volumeName "$NAME" "$RW" >/dev/null 2>&1; then
+  say "  via diskutil"
+else
+  rm -f "$RW"
+  hdiutil create -size "${SIZE_MB}m" -fs HFS+ -volname "$NAME" "$RW" >/dev/null 2>&1 \
+    || fail "could not create a writable disk image"
+  say "  via hdiutil"
+fi
 
 # Mounting inside the project rather than /Volumes keeps this working in
 # sandboxed environments that only permit writes under the working directory.

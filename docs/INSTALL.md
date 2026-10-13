@@ -19,7 +19,7 @@ Everything runs on your Mac. No audio or text is sent anywhere.
 ## Install
 
 1. Download **`Wisp-<version>-arm64.dmg`** from the
-   [Releases](https://github.com/YOUR-USERNAME/wisp/releases) page.
+   [Releases](https://github.com/benjaminflin/wisp/releases) page.
 2. Open the DMG and drag **Wisp** onto the **Applications** shortcut.
 3. Open Wisp from Applications. On first launch macOS will refuse — see below.
 

@@ -43,6 +43,18 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      # npm can decline to run a package's install scripts. If that happens to
+      # Electron, its binary is never fetched and electron-builder fails
+      # confusingly, because electron-builder.yml points electronDist at it.
+      - name: Ensure the Electron binary is present
+        run: |
+          if [ ! -d node_modules/electron/dist ]; then
+            echo "electron was not installed by npm; fetching it explicitly"
+            node node_modules/electron/install.js
+          fi
+          test -d node_modules/electron/dist
+          ls node_modules/electron/dist | head -3
+
       - name: Build the bundled Python runtime
         run: npm run runtime
 
