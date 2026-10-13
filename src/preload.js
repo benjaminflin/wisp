@@ -22,6 +22,7 @@ const api = {
   diagnostics: () => ipcRenderer.invoke('wisp:diagnostics'),
 
   openAccessibility: () => ipcRenderer.invoke('wisp:open-accessibility'),
+  recheckAccessibility: () => ipcRenderer.invoke('wisp:recheck-accessibility'),
   openExternal: (url) => ipcRenderer.invoke('wisp:open-external', url),
   quit: () => ipcRenderer.invoke('wisp:quit'),
 

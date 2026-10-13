@@ -217,6 +217,25 @@ function render(next) {
   el('statusMic').textContent = s.mic.device || 'not tested';
   el('statusHint').textContent = s.hint || '';
 
+  // Say exactly which app to tick. macOS attributes the grant to the process
+  // that launched Wisp, so when started from a terminal the useful answer is
+  // usually the terminal, not Wisp.
+  const target = s.accessibility.target;
+  const accessibilityHint = el('accessibilityHint');
+  if (!holdMode || (s.accessibility.trusted && s.holdHookActive)) {
+    accessibilityHint.textContent = '';
+  } else if (!target) {
+    accessibilityHint.textContent = 'System Settings → Privacy & Security → Accessibility.';
+  } else {
+    const name = target.suggestion.split('/').pop().replace(/\.app$/, '');
+    accessibilityHint.textContent = s.accessibility.trusted
+      ? 'Accessibility is granted, but the input hook is not running. Press “Check again”, then relaunch Wisp.'
+      : `In System Settings → Privacy & Security → Accessibility, enable “${name}”.` +
+        (target.packaged
+          ? ''
+          : ' Wisp was started by another app, so macOS lists that app rather than Wisp itself.');
+  }
+
   // history
   renderHistory(s.history);
   el('dataPath').textContent = `Settings and transcripts: ${s.dataDir}`;
@@ -395,7 +414,23 @@ function wire() {
     if (result.models) populateOllamaModels(result.models);
   });
 
-  el('btnAccessibility').addEventListener('click', () => window.wisp.openAccessibility());
+  el('btnAccessibility').addEventListener('click', async () => {
+    const target = await window.wisp.openAccessibility();
+    if (snapshot) {
+      snapshot.accessibility.target = target;
+      render(snapshot);
+    }
+  });
+
+  el('btnRecheckAccessibility').addEventListener('click', async () => {
+    const result = await window.wisp.recheckAccessibility();
+    flashHint(
+      result.trusted
+        ? 'Accessibility is granted for this app.'
+        : 'Still not granted — macOS may need Wisp relaunched after you enable it.'
+    );
+    render(await window.wisp.getState());
+  });
 
   el('btnTestCleanup').addEventListener('click', async () => {
     const input = el('testInput').value.trim();

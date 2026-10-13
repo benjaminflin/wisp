@@ -11,7 +11,7 @@
  */
 
 const { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, screen, shell, systemPreferences } = require('electron');
-const { spawn } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -60,7 +60,7 @@ const state = {
   worker: { ready: false, pid: null, error: null },
   model: { state: 'unloaded', name: settingsStore.DEFAULTS.whisperModel, loadSeconds: null },
   ollama: { state: 'unknown', models: [], error: null },
-  accessibility: { trusted: false },
+  accessibility: { trusted: false, target: null },
   holdHookActive: false,
   mic: { ok: null, device: null },
   lastResult: null,
@@ -410,6 +410,7 @@ function registerTriggers({ report = false } = {}) {
   // untrusted makes macOS raise a permission dialog, so calling this on every
   // launch and settings change would nag the user repeatedly.
   state.accessibility.trusted = systemPreferences.isTrustedAccessibilityClient(false);
+  state.accessibility.target = accessibilityTarget();
 
   globalShortcut.unregisterAll();
   if (config.triggerMode === 'toggle' || config.triggerMode === 'both') {
@@ -878,6 +879,8 @@ function diagnosticsReport() {
     `model ${s.model.state} ${s.model.name} loadSeconds=${s.model.loadSeconds}`,
     `ollama ${s.ollama.state} error=${s.ollama.error || 'none'} models=[${(s.ollama.models || []).join(', ')}]`,
     `accessibility trusted=${s.accessibility.trusted} holdHookActive=${s.holdHookActive}`,
+    `accessibility target=${s.accessibility.target ? s.accessibility.target.suggestion : 'unknown'}`,
+    `process chain ${s.accessibility.target ? s.accessibility.target.chain.join(' <- ') : 'unknown'}`,
     `mic ok=${s.mic.ok} device=${s.mic.device}`,
     `phase ${s.phase}`,
     `settings ${JSON.stringify(s.settings)}`,
@@ -885,6 +888,58 @@ function diagnosticsReport() {
     '--- worker log (most recent last) ---',
     ...(worker ? worker.recentLogs() : ['(no worker)']),
   ].join('\n');
+}
+
+/**
+ * Walks the parent process chain. macOS decides which app an Accessibility
+ * grant belongs to by looking up this chain, not at the process that asked, so
+ * when Wisp is launched from a terminal it is the *terminal* the user has to
+ * enable. Surfacing that saves a lot of guessing.
+ */
+function processAncestry(maxDepth = 5) {
+  const chain = [];
+  let pid = process.pid;
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    try {
+      const line = execFileSync('ps', ['-o', 'ppid=,comm=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+      const match = /^(\d+)\s+(.+)$/.exec(line);
+      if (!match) break;
+      chain.push(match[2]);
+      pid = Number(match[1]);
+      if (!Number.isFinite(pid) || pid <= 1) break;
+    } catch {
+      // ps can be unavailable in a restricted environment; the caller falls
+      // back to the executable path, which is still a usable answer.
+      break;
+    }
+  }
+  return chain;
+}
+
+/** Which app the user should actually tick in System Settings. */
+let cachedAccessibilityTarget = null;
+function accessibilityTarget() {
+  if (cachedAccessibilityTarget) return cachedAccessibilityTarget;
+  const chain = processAncestry();
+  // The outermost .app bundle is what the user recognises in the list.
+  let suggestion = null;
+  for (const entry of chain) {
+    const index = entry.indexOf('.app/');
+    if (index !== -1) suggestion = entry.slice(0, index + 4);
+  }
+  if (!suggestion) {
+    // Electron.app for an unpackaged run, Wisp.app once packaged. Either way
+    // it is the name macOS shows in the Accessibility list.
+    const index = process.execPath.indexOf('.app/');
+    if (index !== -1) suggestion = process.execPath.slice(0, index + 4);
+  }
+  cachedAccessibilityTarget = {
+    suggestion: suggestion || chain[1] || process.execPath,
+    executable: process.execPath,
+    chain,
+    packaged: app.isPackaged,
+  };
+  return cachedAccessibilityTarget;
 }
 
 // -------------------------------------------------------------------- IPC
@@ -954,10 +1009,44 @@ function registerIpc() {
     return true;
   });
 
-  ipcMain.handle('wisp:open-accessibility', () => {
-    systemPreferences.isTrustedAccessibilityClient(true); // shows the system prompt when possible
-    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
-    return true;
+  ipcMain.handle('wisp:open-accessibility', async () => {
+    state.accessibility.target = accessibilityTarget();
+    // Ask macOS for its own prompt first; it is only shown for a process it
+    // considers responsible, so it may do nothing. The pane is the real path.
+    try {
+      systemPreferences.isTrustedAccessibilityClient(true);
+    } catch {
+      /* not fatal */
+    }
+    // macOS 13 renamed the pane to an extension. The old
+    // "com.apple.preference.security" identifier is dead on modern releases,
+    // so try the current one and fall back to opening the pane itself.
+    const candidates = [
+      'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility',
+      'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension',
+    ];
+    for (const url of candidates) {
+      try {
+        await shell.openExternal(url);
+        break;
+      } catch {
+        /* try the next form */
+      }
+    }
+    return state.accessibility.target;
+  });
+
+  ipcMain.handle('wisp:recheck-accessibility', () => {
+    // Trust can be granted while Wisp runs, so allow a manual re-check instead
+    // of making the user restart to find out whether it took.
+    const trusted = systemPreferences.isTrustedAccessibilityClient(false);
+    if (trusted !== state.accessibility.trusted) {
+      state.accessibility.trusted = trusted;
+      registerTriggers();
+      broadcast();
+    }
+    state.accessibility.target = accessibilityTarget();
+    return { trusted, triggerError: registerTriggers({ report: true }).error };
   });
 
   ipcMain.handle('wisp:open-external', (_event, url) => {
