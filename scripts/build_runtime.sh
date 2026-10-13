@@ -15,7 +15,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-PY_SERIES="${WISP_PY_SERIES:-3.13}"
+# The interpreter is pinned on purpose. Resolving "latest" through api.github.com
+# made the build non-reproducible and, worse, unreliable: unauthenticated API
+# calls are capped at 60 per hour per IP address, CI runners share addresses, and
+# the release build duly died with HTTP 403. Release assets themselves are not
+# rate limited, so this fetches a known-good asset directly and verifies it.
+# Override WISP_PY_VERSION / WISP_PY_RELEASE / WISP_PY_SHA256 to bump it.
+PY_VERSION="${WISP_PY_VERSION:-3.13.16}"
+PY_RELEASE="${WISP_PY_RELEASE:-20261009}"
+PY_SHA256="${WISP_PY_SHA256:-3338fcd572a670ec45ac9ef75480b95595ea9b6b5dd320952fcf5df185089941}"
+
 CACHE="$ROOT/build/cache"
 RUNTIME="$ROOT/build/python-runtime"
 STAMP="$RUNTIME/.interpreter"
@@ -28,36 +37,28 @@ fail() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 mkdir -p "$CACHE" build
 
-TARBALL="$(find "$CACHE" -maxdepth 1 -name "cpython-${PY_SERIES}.*-aarch64-apple-darwin-install_only.tar.gz" 2>/dev/null | sort | tail -1)"
+ASSET="cpython-${PY_VERSION}+${PY_RELEASE}-aarch64-apple-darwin-install_only.tar.gz"
+TARBALL="$CACHE/$ASSET"
+URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PY_RELEASE}/${ASSET}"
 
-if [ -z "$TARBALL" ]; then
-  say "Resolving the latest python-build-standalone release"
-  TARBALL="$(python3 - "$PY_SERIES" "$CACHE" <<'PY'
-import json, pathlib, sys, urllib.request
+if [ ! -f "$TARBALL" ]; then
+  say "Downloading ${ASSET}"
+  curl -fL --retry 3 --retry-delay 2 --connect-timeout 30 -o "$TARBALL.part" "$URL" \
+    || fail "could not download ${URL}"
+  mv "$TARBALL.part" "$TARBALL"
+fi
 
-series, cache = sys.argv[1], pathlib.Path(sys.argv[2])
-api = "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"
-req = urllib.request.Request(api, headers={"User-Agent": "wisp-build"})
-data = json.load(urllib.request.urlopen(req, timeout=120))
-asset = next(
-    a
-    for a in data["assets"]
-    if a["name"].endswith("aarch64-apple-darwin-install_only.tar.gz")
-    and series in a["name"]
-    and "freethreaded" not in a["name"]
-)
-dest = cache / asset["name"]
-if not (dest.exists() and dest.stat().st_size == asset["size"]):
-    req = urllib.request.Request(asset["browser_download_url"], headers={"User-Agent": "wisp-build"})
-    with urllib.request.urlopen(req, timeout=1800) as resp, open(dest, "wb") as fh:
-        while True:
-            chunk = resp.read(1 << 20)
-            if not chunk:
-                break
-            fh.write(chunk)
-print(dest)
-PY
-)"
+if [ -n "$PY_SHA256" ]; then
+  ACTUAL="$(shasum -a 256 "$TARBALL" | awk '{print $1}')"
+  if [ "$ACTUAL" != "$PY_SHA256" ]; then
+    rm -f "$TARBALL"
+    fail "checksum mismatch for ${ASSET}
+     expected ${PY_SHA256}
+     actual   ${ACTUAL}"
+  fi
+  say "Checksum verified"
+else
+  say "WARNING: no checksum configured for ${ASSET}; skipping verification"
 fi
 
 say "Interpreter: $(basename "$TARBALL")"
