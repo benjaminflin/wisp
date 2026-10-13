@@ -72,6 +72,11 @@ let history = [];
 
 // Set by the self test so an automated run makes no sound at all.
 let suppressSounds = false;
+// Also set by the self test, for the probe that opens the live microphone:
+// whatever the mic happens to hear is not the user's dictation, so it must not
+// overwrite their clipboard or land in their history.
+let suppressClipboard = false;
+let suppressHistory = false;
 
 function playSound(name) {
   if (suppressSounds || !settingsStore.read().playSounds) return;
@@ -128,6 +133,7 @@ function saveHistory() {
 }
 
 function pushHistory(entry) {
+  if (suppressHistory) return;
   if (!settingsStore.read().keepTranscripts) return;
   history.unshift({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, at: new Date().toISOString(), ...entry });
   history = history.slice(0, HISTORY_LIMIT);
@@ -580,8 +586,8 @@ async function finishTranscript(raw, meta = {}) {
   const cleanup = await qwen.clean(raw, config);
   const text = cleanup.text;
 
-  const copied = config.copyToClipboard ? await copyToClipboard(text) : false;
-  if (config.copyToClipboard && !copied) {
+  const copied = config.copyToClipboard && !suppressClipboard ? await copyToClipboard(text) : false;
+  if (config.copyToClipboard && !copied && !suppressClipboard) {
     console.warn('[wisp] clipboard write did not stick; the transcript is still in Recent transcripts.');
   }
 
@@ -757,27 +763,40 @@ async function runSelfTest() {
   check('Whisper model is warm', state.model.state === 'loaded', `${state.model.name} in ${state.model.loadSeconds}s`);
 
   // The clipboard is the product, so probe it up front: an environment that
-  // blocks the pasteboard should read as a skip, not a false failure.
+  // blocks the pasteboard should read as a skip, not a false failure. The
+  // previous contents are put back at the end.
+  const originalClipboard = await readClipboard();
   const clipboardWorks = await copyToClipboard('WISP-CLIPBOARD-PROBE');
   if (clipboardWorks) console.log('  \x1b[32mPASS\x1b[0m  system clipboard is reachable');
   else skip('system clipboard is reachable', 'pasteboard blocked in this environment');
 
   const spoken = 'Book the studio for Monday at nine am, scratch that, Tuesday at eleven am.';
-  const historyBefore = history.length;
 
   if (!withSpeaker) {
-    // Open the microphone, capture a moment of room tone, and close it again.
-    // This drives the full live-capture path without making any sound.
+    // Open the microphone, capture a moment of whatever is in the room, and
+    // close it again. Clipboard and history stay off for this part: the point
+    // is only to prove the capture path runs, not to keep the audio.
+    suppressClipboard = true;
+    suppressHistory = true;
     try {
       await startRecording('selftest');
       check('microphone opened', state.phase === 'recording', state.mic.device || '');
-      await sleep(600);
+      await sleep(500);
       await stopRecording('selftest');
-      check('live capture path completes cleanly', state.phase === 'idle', state.mic.device || '');
+      const captured = state.lastResult || {};
+      const outcome = captured.text
+        ? `heard ${JSON.stringify(captured.text.slice(0, 40))} (not kept)`
+        : 'nothing';
+      check('live capture path completes cleanly', state.phase === 'idle', `${state.mic.device || ''} · ${outcome}`);
     } catch (err) {
       check('live capture path completes cleanly', false, err.message);
+    } finally {
+      suppressClipboard = false;
+      suppressHistory = false;
     }
   }
+
+  const historyBefore = history.length;
 
   if (withSpeaker) {
     await startRecording('selftest');
@@ -788,20 +807,30 @@ async function runSelfTest() {
     const captured = (state.lastResult?.raw || '').trim();
     check('microphone audio was transcribed', Boolean(captured), captured ? `"${captured}"` : 'empty transcript');
   } else {
-    const wav = path.join(PROJECT_ROOT, 'tmp', 'selftest.wav');
-    fs.mkdirSync(path.dirname(wav), { recursive: true });
-    await run('say', ['-o', wav, '--data-format=LEI16@16000', '--file-format=WAVE', spoken]);
-    if (!fs.existsSync(wav)) {
-      check('speech rendered to a file', false, `say did not write ${wav}`);
-    } else {
-      const out = await worker.request('transcribe', { path: wav }, 10 * 60 * 1000);
-      const raw = (out.text || '').trim();
-      check('Whisper transcribed the speech file', Boolean(raw), raw ? `"${raw}"` : 'empty transcript');
-      // Everything downstream of capture runs exactly as a real dictation does.
-      await finishTranscript(raw, {
-        transcriptMs: Math.round((out.elapsed || 0) * 1000),
-        audioSeconds: out.duration,
-      });
+    // Must live somewhere writable in a packaged build too, where the app is
+    // read-only inside an asar archive.
+    const wav = path.join(settingsStore.dataDir(), 'selftest.wav');
+    try {
+      fs.mkdirSync(path.dirname(wav), { recursive: true });
+      await run('say', ['-o', wav, '--data-format=LEI16@16000', '--file-format=WAVE', spoken]);
+      if (!fs.existsSync(wav)) {
+        check('speech rendered to a file', false, `say did not write ${wav}`);
+      } else {
+        const out = await worker.request('transcribe', { path: wav }, 10 * 60 * 1000);
+        const raw = (out.text || '').trim();
+        check('Whisper transcribed the speech file', Boolean(raw), raw ? `"${raw}"` : 'empty transcript');
+        // Everything downstream of capture runs exactly as a real dictation does.
+        await finishTranscript(raw, {
+          transcriptMs: Math.round((out.elapsed || 0) * 1000),
+          audioSeconds: out.duration,
+        });
+      }
+    } finally {
+      try {
+        fs.unlinkSync(wav);
+      } catch {
+        /* leaving a scratch file behind is not worth failing over */
+      }
     }
   }
 
@@ -822,8 +851,15 @@ async function runSelfTest() {
 
   const failures = results.filter((r) => !r.ok);
   console.log(
-    `\n${failures.length === 0 ? 'All checks passed' : `${failures.length} check(s) failed`} (${results.length - failures.length}/${results.length})\n`
+    `\n${failures.length === 0 ? 'All checks passed' : `${failures.length} check(s) failed`} (${results.length - failures.length}/${results.length})`
   );
+  // Running a test should not cost the user whatever they had copied.
+  if (clipboardWorks && originalClipboard) {
+    await copyToClipboard(originalClipboard);
+    console.log('previous clipboard contents restored\n');
+  } else {
+    console.log('');
+  }
   return failures.length === 0;
 }
 
@@ -935,8 +971,20 @@ function registerIpc() {
 
 // --------------------------------------------------------------- lifecycle
 
+/**
+ * Which Hugging Face cache to use. A development checkout already has the
+ * weights from setup.sh; a packaged build keeps them beside its own data so
+ * they are downloaded once and survive upgrades.
+ */
+function resolveHfHome() {
+  if (process.env.WISP_HF_HOME) return process.env.WISP_HF_HOME;
+  const devCache = path.join(PROJECT_ROOT, '.hf');
+  if (fs.existsSync(devCache)) return devCache;
+  return path.join(settingsStore.dataDir(), 'models');
+}
+
 function wireWorker() {
-  worker = new Worker({ projectRoot: RESOURCE_ROOT });
+  worker = new Worker({ projectRoot: RESOURCE_ROOT, hfHome: resolveHfHome() });
 
   worker.on('ready', (msg) => {
     state.worker.ready = true;

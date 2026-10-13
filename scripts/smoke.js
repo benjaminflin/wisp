@@ -41,6 +41,42 @@ function check(name, ok, detail = '') {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Minimal 16-bit mono PCM WAV writer, so gate tests need no fixtures. */
+function writeWav16(file, samples, rate) {
+  const count = samples.length;
+  const buffer = Buffer.alloc(44 + count * 2);
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + count * 2, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(rate, 24);
+  buffer.writeUInt32LE(rate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(count * 2, 40);
+  for (let i = 0; i < count; i += 1) {
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    buffer.writeInt16LE(Math.round(clamped * 32767), 44 + i * 2);
+  }
+  fs.writeFileSync(file, buffer);
+}
+
+/** Deterministic pseudo-random noise at a given amplitude. */
+function noise(seconds, amplitude, rate = 16000) {
+  const count = seconds * rate;
+  const out = new Float32Array(count);
+  let seed = 987654321;
+  for (let i = 0; i < count; i += 1) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    out[i] = ((seed / 0x7fffffff) * 2 - 1) * amplitude;
+  }
+  return out;
+}
+
 async function waitFor(worker, event, timeoutMs) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out waiting for '${event}'`)), timeoutMs);
@@ -85,6 +121,33 @@ async function main() {
     check('Whisper model loads', true, `${MODEL.split('/').pop()} in ${warmed.elapsed}s`);
   } catch (err) {
     check('Whisper model loads', false, err.message);
+  }
+
+  // Deterministic gate checks. Ambient room tone varies far too much to test
+  // against, so feed the gate exact inputs instead. All three must produce no
+  // transcript: the whole point is that nothing invented reaches the clipboard.
+  const gateCases = [
+    { label: 'digital silence', samples: new Float32Array(16000 * 3) },
+    { label: 'low-level noise', samples: noise(3, 0.003) },
+    // Loud enough to clear the energy gate, so this one is caught only by the
+    // confidence gate. That is the signal that actually protects the user.
+    { label: 'speech-level noise', samples: noise(3, 0.02) },
+  ];
+  for (const gateCase of gateCases) {
+    const file = path.join(ROOT, 'tmp', `gate-${gateCase.label.replace(/\s+/g, '-')}.wav`);
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      writeWav16(file, gateCase.samples, 16000);
+      const out = await worker.request('transcribe', { path: file, language: 'en' }, 10 * 60 * 1000);
+      const text = (out.text || '').trim();
+      check(
+        `${gateCase.label} yields no transcript`,
+        text.length === 0,
+        text ? `LEAKED "${text}"` : out.skipped || 'discarded'
+      );
+    } catch (err) {
+      check(`${gateCase.label} yields no transcript`, false, err.message);
+    }
   }
 
   let transcript = '';

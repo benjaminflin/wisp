@@ -103,10 +103,11 @@ The tray menu has Start/Stop, Cancel, recent transcripts, and Quit.
 - **Custom vocabulary** — names, acronyms, and jargon that Whisper tends to
   mangle. Passed as a decoding hint, not a hard constraint.
 - **Silence floor** — the level a 20 ms frame must reach to count as speech.
-  Room tone is steady and speech is bursty, so a clip is skipped when almost
-  no frame rises above this, and a transcript Whisper is not confident about
-  is thrown away too. Together those stop it inventing phrases out of room
-  noise. Raise it only if you dictate in a noisy room.
+  Three independent checks stand between you and a transcript invented from
+  nothing: the clip needs frames clearly above this floor, its loud parts must
+  not look like flat broadband noise, and Whisper's own confidence must be
+  adequate. Every threshold was set by measuring real speech, and biased so
+  that real words are never discarded. Raise it only in a noisy room.
 - **Cleanup with Qwen** — turn it off to copy Whisper's raw output verbatim.
   The "Try it" box runs the cleanup on any text so you can see what it does.
 - **Play a sound** — the start/stop blips. Turn this off if you would rather

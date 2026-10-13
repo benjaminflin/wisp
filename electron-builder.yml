@@ -16,17 +16,36 @@ files:
 extraResources:
   - from: python
     to: python
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
   - from: .venv
     to: .venv
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
 
 asarUnpack:
   - "**/node_modules/uiohook-napi/**"
 
+# uiohook-napi ships N-API prebuilds that load in Electron unchanged, so a
+# native rebuild is unnecessary and would demand a full C++ toolchain.
+npmRebuild: false
+
+# Reuse the Electron that npm already installed rather than downloading another
+# copy into ~/Library/Caches/electron.
+electronDist: node_modules/electron/dist
+
 mac:
   category: public.app-category.productivity
   icon: build/icon.png
+  # zip is the default because it builds anywhere. dmg is the nicer artefact
+  # for sharing; add it back if you want it, but hdiutil must be able to mount
+  # a disk image, which restricted environments forbid.
   target:
-    - target: dmg
+    - target: zip
       arch: [arm64]
   extendInfo:
     NSMicrophoneUsageDescription: Wisp records your voice so it can transcribe it locally on this Mac.

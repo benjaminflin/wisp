@@ -16,9 +16,10 @@ const path = require('path');
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 class Worker extends EventEmitter {
-  constructor({ projectRoot }) {
+  constructor({ projectRoot, hfHome = null }) {
     super();
     this.projectRoot = projectRoot;
+    this.hfHome = hfHome;
     this.proc = null;
     this.pending = new Map();
     this.nextId = 1;
@@ -52,9 +53,19 @@ class Worker extends EventEmitter {
 
   buildEnv() {
     const env = { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' };
-    // Reuse the model cache that scripts/setup.sh populated.
-    const hfHome = path.join(this.projectRoot, '.hf');
-    if (fs.existsSync(hfHome)) env.HF_HOME = hfHome;
+    // Point Whisper at the cache that already holds the weights, so a packaged
+    // build and a development checkout do not each download 1.6 GB.
+    if (this.hfHome) {
+      try {
+        fs.mkdirSync(this.hfHome, { recursive: true });
+      } catch {
+        /* if it cannot be created, huggingface_hub will report it */
+      }
+      env.HF_HOME = this.hfHome;
+    } else {
+      const devCache = path.join(this.projectRoot, '.hf');
+      if (fs.existsSync(devCache)) env.HF_HOME = devCache;
+    }
     env.HF_HUB_DISABLE_TELEMETRY = '1';
     // Whisper's progress bars are noise on a pipe.
     env.TQDM_DISABLE = '1';

@@ -43,6 +43,16 @@ say "Installing Python dependencies (sounddevice, mlx-whisper)"
 .venv/bin/python -m pip install --quiet --upgrade pip
 .venv/bin/pip install --quiet sounddevice mlx-whisper
 
+# mlx-whisper declares torch, but only its PyTorch-checkpoint conversion
+# utility imports it; the transcription path never does. Dropping it halves the
+# install, which matters because a packaged app ships this virtualenv. Verified
+# by transcribing with the package genuinely removed from disk.
+# Set WISP_KEEP_TORCH=1 to keep it.
+if [ "${WISP_KEEP_TORCH:-0}" != "1" ] && .venv/bin/python -c "import torch" >/dev/null 2>&1; then
+  say "Removing torch (unused by dictation, saves ~580 MB)"
+  .venv/bin/pip uninstall -y torch >/dev/null
+fi
+
 say "Installing Node dependencies"
 npm install --no-fund --no-audit
 

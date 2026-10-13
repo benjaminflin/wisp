@@ -38,8 +38,18 @@ MIN_ACTIVE_FRAME_FRACTION = 0.01
 # matters for latency as much as accuracy: a clip that reaches Whisper with no
 # speech burns the whole temperature-fallback schedule, about six passes.
 PEAK_FRAME_MULTIPLE = 2.0
-# Mean per-segment log probability. Measured: room tone lands near -2.4 and
-# real speech near -0.2, so -1.0 separates them with a wide margin.
+# Broadband noise has a flat spectrum; voiced speech is peaky. Measured over
+# 20 ms frames: white noise scores 0.56, real speech 0.02-0.05, and speech
+# mixed with noise 0.10 (30 dB SNR) rising to 0.39 (0 dB SNR). The threshold is
+# biased high on purpose: if this gate wrongly rejects, those words are lost
+# with nothing to catch them, whereas broadband noise it lets through still
+# faces the confidence gate below.
+SPECTRAL_FLATNESS_MAX = 0.45
+# Mean per-segment log probability, Whisper's own confidence. Kept deliberately
+# loose at -1.0: real utterances measured between -0.76 ("Okay.") and -0.06,
+# while a loud-noise hallucination scored -0.54. Short real speech therefore
+# overlaps with hallucination, so this gate cannot be tightened without
+# discarding legitimate one-word dictation. It is a backstop, not the main net.
 CONFIDENCE_FLOOR = -1.0
 
 # ---------------------------------------------------------------- transport
@@ -265,26 +275,53 @@ class Recorder:
 # ---------------------------------------------------------------- whisper
 
 
-def has_speech(audio: np.ndarray, floor: float) -> bool:
-    """True when enough 20 ms frames carry real acoustic energy.
+def spectral_flatness(frames: np.ndarray) -> float:
+    """Geometric over arithmetic mean of the power spectrum, averaged.
 
-    A quiet room still has a measurable overall RMS, but every frame sits at
-    roughly the same level. Speech is bursty, so a good share of frames rise
-    well above the noise. Requiring only a small active fraction keeps quiet
-    talkers while rejecting steady room tone, which is what makes Whisper
-    invent words.
+    Near 1.0 for flat broadband noise, far lower for the peaky spectrum of
+    voiced speech."""
+    if frames.size == 0:
+        return 1.0
+    window = np.hanning(frames.shape[1])
+    power = np.abs(np.fft.rfft(frames * window, axis=1)) ** 2 + 1e-12
+    geometric = np.exp(np.mean(np.log(power), axis=1))
+    arithmetic = np.mean(power, axis=1)
+    return float(np.mean(geometric / arithmetic))
+
+
+def speech_rejection_reason(audio: np.ndarray, floor: float) -> str | None:
+    """None when the clip plausibly holds speech, otherwise why it does not.
+
+    Three independent checks, all chosen from measurements on real speech
+    rather than guesses, because discarding the user's words is the worst
+    thing this app can do. Failing any one of them means Whisper never runs.
     """
     if audio.size < SAMPLE_RATE * 0.2:
-        return False
-    frame = int(SAMPLE_RATE * SPEECH_FRAME_SECONDS)
-    count = audio.size // frame
+        return "too_short"
+
+    frame_length = int(SAMPLE_RATE * SPEECH_FRAME_SECONDS)
+    count = audio.size // frame_length
     if count == 0:
-        return False
-    frames = audio[: count * frame].reshape(count, frame)
+        return "too_short"
+    frames = audio[: count * frame_length].reshape(count, frame_length)
     rms = np.sqrt(np.mean(np.square(frames), axis=1))
-    active = float((rms > floor).mean())
-    loudest = float(rms.max())
-    return active >= MIN_ACTIVE_FRAME_FRACTION and loudest >= floor * PEAK_FRAME_MULTIPLE
+
+    # 1. Is anything there at all, and is it bursty rather than steady?
+    active = rms > floor
+    if float(active.mean()) < MIN_ACTIVE_FRAME_FRACTION:
+        return "silence"
+    if float(rms.max()) < floor * PEAK_FRAME_MULTIPLE:
+        return "silence"
+
+    # 2. Does the loud part look like a voice or like broadband noise?
+    if spectral_flatness(frames[active]) > SPECTRAL_FLATNESS_MAX:
+        return "non_speech"
+
+    return None
+
+
+def has_speech(audio: np.ndarray, floor: float) -> bool:
+    return speech_rejection_reason(audio, floor) is None
 
 
 def load_wav(path: str) -> np.ndarray:
@@ -416,10 +453,11 @@ class Session:
 
         emit({"event": "transcribing", "duration": round(duration, 2)})
         try:
-            if not has_speech(audio, self.silence_floor):
+            reason = speech_rejection_reason(audio, self.silence_floor)
+            if reason:
                 log(
-                    f"clip of {duration:.2f}s has no frames above {self.silence_floor}; "
-                    f"skipping the model (rms {rms:.4f}, peak {peak:.4f})"
+                    f"skipping the model for a {duration:.2f}s clip: {reason} "
+                    f"(rms {rms:.4f}, peak {peak:.4f})"
                 )
                 return {
                     "text": "",
@@ -427,7 +465,7 @@ class Session:
                     "rms": round(rms, 5),
                     "peak": round(peak, 5),
                     "elapsed": 0.0,
-                    "skipped": "silence",
+                    "skipped": reason,
                 }
             out = transcribe(audio, self.model, self.language, self.vocabulary)
             out["rms"] = round(rms, 5)
@@ -500,8 +538,9 @@ def handle(session: Session, msg: dict) -> None:
             language = msg["language"] if "language" in msg else session.language
             vocabulary = msg.get("vocabulary", session.vocabulary)
             duration = round(audio.size / SAMPLE_RATE, 2)
-            if not has_speech(audio, session.silence_floor):
-                reply(req_id, text="", skipped="silence", duration=duration)
+            reason = speech_rejection_reason(audio, session.silence_floor)
+            if reason:
+                reply(req_id, text="", skipped=reason, duration=duration)
                 return
             out = transcribe(audio, model, language, vocabulary)
             out["duration"] = duration
