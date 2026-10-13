@@ -221,6 +221,13 @@ function render(next) {
   el('statusMic').textContent = s.mic.device || 'not tested';
   el('statusHint').textContent = s.hint || '';
 
+  const promptHint = el('cleanupPromptHint');
+  if (promptHint) {
+    promptHint.textContent = String(s.settings.cleanupPrompt || '').trim()
+      ? 'Using your custom prompt. “Reset to default” restores the built-in wording.'
+      : 'This is the built-in prompt. Edit it to make it yours, or leave it alone.';
+  }
+
   // Say exactly which app to tick. macOS attributes the grant to the process
   // that launched Wisp, so when started from a terminal the useful answer is
   // usually the terminal, not Wisp.
@@ -315,6 +322,9 @@ function applySettingsToForm(s) {
   put('cleanupEnabled', s.cleanupEnabled, 'checked');
   put('ollamaUrl', s.ollamaUrl);
   put('ollamaModel', s.ollamaModel);
+  // Show the prompt actually in use: the custom one, or the built-in default
+  // when none has been set.
+  put('cleanupPrompt', String(s.cleanupPrompt || '').trim() || s.defaultCleanupPrompt || '');
   put('inputDevice', s.inputDevice === null ? '' : String(s.inputDevice));
   put('copyToClipboard', s.copyToClipboard, 'checked');
   put('autoPaste', s.autoPaste, 'checked');
@@ -392,6 +402,7 @@ function wire() {
   bind('cleanupEnabled', 'cleanupEnabled', { type: 'checkbox' });
   bind('ollamaUrl', 'ollamaUrl');
   bind('ollamaModel', 'ollamaModel');
+  bind('cleanupPrompt', 'cleanupPrompt', { type: 'input' });
   bind('copyToClipboard', 'copyToClipboard', { type: 'checkbox' });
   bind('autoPaste', 'autoPaste', { type: 'checkbox' });
   bind('pasteDelayMs', 'pasteDelayMs', { type: 'number' });
@@ -438,6 +449,14 @@ function wire() {
         : 'Still not granted — macOS may need Wisp relaunched after you enable it.'
     );
     render(await window.wisp.getState());
+  });
+
+  el('btnResetPrompt').addEventListener('click', async () => {
+    // Emptying the setting is what "use the built-in prompt" means, so this
+    // does not paste the default text in as a custom prompt.
+    const field = el('cleanupPrompt');
+    field.value = snapshot ? snapshot.defaultCleanupPrompt || '' : '';
+    await persist({ cleanupPrompt: '' });
   });
 
   el('btnTestCleanup').addEventListener('click', async () => {

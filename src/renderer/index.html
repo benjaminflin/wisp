@@ -147,6 +147,14 @@
           <datalist id="ollamaModelList"></datalist>
         </label>
         <label class="field">
+          <span>Cleanup instructions</span>
+          <textarea id="cleanupPrompt" rows="9" spellcheck="false"></textarea>
+        </label>
+        <div class="button-row">
+          <button id="btnResetPrompt" type="button">Reset to default</button>
+        </div>
+        <p class="hint" id="cleanupPromptHint"></p>
+        <label class="field">
           <span>Try it</span>
           <textarea id="testInput" rows="2" placeholder="um so meet me at three, scratch that, four"></textarea>
         </label>

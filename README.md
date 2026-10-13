@@ -115,6 +115,15 @@ The tray menu has Start/Stop, Cancel, recent transcripts, and Quit.
   that real words are never discarded. Raise it only in a noisy room.
 - **Cleanup with Qwen** — turn it off to copy Whisper's raw output verbatim.
   The "Try it" box runs the cleanup on any text so you can see what it does.
+- **Cleanup instructions** — the system prompt sent to Qwen, editable in full.
+  It starts as the built-in wording; **Reset to default** clears your version so
+  the built-in one is used again, which also means later improvements to that
+  wording still reach you. If you rewrite it, keep two ideas intact: the model
+  edits your words and never answers them, and it returns only the text with no
+  commentary. Those are what stop a dictated question from being treated as a
+  prompt to respond to. The output guards are unaffected — responses are still
+  constrained to a JSON object, and an implausible result still falls back to
+  the raw transcript.
 - **Play a sound** — the start/stop blips. Turn this off if you would rather
   Wisp stay silent.
 

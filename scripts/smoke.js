@@ -219,6 +219,27 @@ async function main() {
     check('Qwen cleans up and applies the spoken correction', false, err.message);
   }
 
+  // A custom prompt has to actually replace the built-in one. Uppercase is used
+  // because it cannot be confused with the default prompt agreeing by accident.
+  try {
+    const overridden = await qwen.clean(sample, {
+      ...QWEN_SETTINGS,
+      cleanupPrompt:
+        'Rewrite the dictated text with every character in UPPERCASE, changing none of the words.',
+    });
+    const applied =
+      overridden.text.length > 0 &&
+      overridden.text === overridden.text.toUpperCase() &&
+      overridden.text !== overridden.text.toLowerCase();
+    check(
+      'a custom cleanup prompt overrides the built-in one',
+      applied,
+      `"${overridden.text.slice(0, 52)}"`
+    );
+  } catch (err) {
+    check('a custom cleanup prompt overrides the built-in one', false, err.message);
+  }
+
   await worker.stop();
   return finish(loadSeconds);
 }

@@ -271,6 +271,9 @@ function snapshot() {
     settings: settingsStore.read(),
     whisperModels: settingsStore.WHISPER_MODELS,
     holdKeys: HOLD_KEYS,
+    // Shown in Settings so the field starts from the real default and can be
+    // restored to it.
+    defaultCleanupPrompt: qwen.SYSTEM_PROMPT,
     dataDir: settingsStore.dataDir(),
     version: app.getVersion(),
   };

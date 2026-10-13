@@ -68,6 +68,10 @@ async function clean(raw, settings) {
   if (!text) return { text: '', edited: false, reason: 'empty' };
   if (!settings.cleanupEnabled) return { text, edited: false, reason: 'disabled' };
 
+  // A blank override means "use the built-in prompt", which is also what the
+  // Reset button in Settings restores.
+  const systemPrompt = String(settings.cleanupPrompt || '').trim() || SYSTEM_PROMPT;
+
   const opts = {
     temperature: 0,
     num_ctx: 8192,
@@ -85,7 +89,7 @@ async function clean(raw, settings) {
       signal: t.signal,
       body: JSON.stringify({
         model: settings.ollamaModel,
-        system: SYSTEM_PROMPT,
+        system: systemPrompt,
         prompt: `Raw transcript:\n"""\n${text}\n"""\n\nCleaned text:`,
         stream: false,
         keep_alive: settings.ollamaKeepAlive || '30m',

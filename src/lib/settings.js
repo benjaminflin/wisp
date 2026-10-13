@@ -50,6 +50,10 @@ const DEFAULTS = {
   ollamaUrl: 'http://127.0.0.1:11434',
   ollamaModel: 'qwen2.5:7b',
   cleanupTimeoutMs: 90000,
+  // Empty means "use the prompt built into src/lib/qwen.js". Keeping the
+  // default text out of here means improvements to it still reach anyone who
+  // has opened the settings window.
+  cleanupPrompt: '',
 
   // audio & output
   inputDevice: null,
@@ -116,6 +120,7 @@ function sanitize(raw, base = DEFAULTS) {
     out.ollamaUrl = input.ollamaUrl.replace(/\/+$/, '').slice(0, 200);
   }
   str('ollamaModel', 120);
+  str('cleanupPrompt', 8000);
   out.cleanupTimeoutMs = clampNumber(input.cleanupTimeoutMs, 5000, 300000, base.cleanupTimeoutMs);
 
   if (input.inputDevice === null || Number.isInteger(input.inputDevice)) {
