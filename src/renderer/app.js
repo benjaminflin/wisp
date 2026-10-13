@@ -224,8 +224,8 @@ function render(next) {
   const promptHint = el('cleanupPromptHint');
   if (promptHint) {
     promptHint.textContent = String(s.settings.cleanupPrompt || '').trim()
-      ? 'Using your custom prompt. “Reset to default” restores the built-in wording.'
-      : 'This is the built-in prompt. Edit it to make it yours, or leave it alone.';
+      ? 'Using your custom prompt. “Reset to default” goes back to the built-in wording.'
+      : 'Using the built-in prompt, shown in grey. “Edit from the default” copies it into the box so you can tweak it.';
   }
 
   // Say exactly which app to tick. macOS attributes the grant to the process
@@ -322,9 +322,14 @@ function applySettingsToForm(s) {
   put('cleanupEnabled', s.cleanupEnabled, 'checked');
   put('ollamaUrl', s.ollamaUrl);
   put('ollamaModel', s.ollamaModel);
-  // Show the prompt actually in use: the custom one, or the built-in default
-  // when none has been set.
-  put('cleanupPrompt', String(s.cleanupPrompt || '').trim() || s.defaultCleanupPrompt || '');
+  // The box holds only a custom prompt. When there is none it stays empty and
+  // the built-in wording is shown as placeholder text instead, so an empty box
+  // means "using the default" rather than "the default happens to be saved".
+  put('cleanupPrompt', s.cleanupPrompt || '');
+  const promptField = el('cleanupPrompt');
+  // defaultCleanupPrompt lives on the snapshot, not on settings, which is what
+  // this function is handed.
+  if (promptField) promptField.placeholder = (snapshot && snapshot.defaultCleanupPrompt) || '';
   put('inputDevice', s.inputDevice === null ? '' : String(s.inputDevice));
   put('copyToClipboard', s.copyToClipboard, 'checked');
   put('autoPaste', s.autoPaste, 'checked');
@@ -402,7 +407,13 @@ function wire() {
   bind('cleanupEnabled', 'cleanupEnabled', { type: 'checkbox' });
   bind('ollamaUrl', 'ollamaUrl');
   bind('ollamaModel', 'ollamaModel');
-  bind('cleanupPrompt', 'cleanupPrompt', { type: 'input' });
+  bind('cleanupPrompt', 'cleanupPrompt', {
+    type: 'input',
+    // Loading the default and not actually changing anything should leave you
+    // on the default, rather than silently freezing a copy of it.
+    transform: (value) =>
+      value.trim() === String((snapshot && snapshot.defaultCleanupPrompt) || '').trim() ? '' : value,
+  });
   bind('copyToClipboard', 'copyToClipboard', { type: 'checkbox' });
   bind('autoPaste', 'autoPaste', { type: 'checkbox' });
   bind('pasteDelayMs', 'pasteDelayMs', { type: 'number' });
@@ -451,11 +462,18 @@ function wire() {
     render(await window.wisp.getState());
   });
 
-  el('btnResetPrompt').addEventListener('click', async () => {
-    // Emptying the setting is what "use the built-in prompt" means, so this
-    // does not paste the default text in as a custom prompt.
+  el('btnLoadDefaultPrompt').addEventListener('click', () => {
+    // Placeholder text cannot be edited, so this copies the built-in prompt
+    // into the box to be tweaked. Nothing is saved until it actually changes.
     const field = el('cleanupPrompt');
-    field.value = snapshot ? snapshot.defaultCleanupPrompt || '' : '';
+    field.value = (snapshot && snapshot.defaultCleanupPrompt) || '';
+    field.focus();
+  });
+
+  el('btnResetPrompt').addEventListener('click', async () => {
+    // Emptying the setting is what "use the built-in prompt" means; the
+    // placeholder then shows which wording that is.
+    el('cleanupPrompt').value = '';
     await persist({ cleanupPrompt: '' });
   });
 

@@ -778,6 +778,39 @@ function applyLoginItem() {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Opens the settings window and writes a PNG of it.
+ *
+ * A development affordance, in the same spirit as --selftest: UI changes are
+ * otherwise impossible to check without a pair of eyes on a screen, and getting
+ * this wrong is easy to do silently.
+ */
+async function captureSettings(outPath, selector = null) {
+  openSettingsWindow();
+  const win = settingsWindow;
+  if (!win) throw new Error('settings window did not open');
+  if (win.webContents.isLoading()) {
+    await new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
+  }
+  // Give the renderer a moment to receive the state snapshot and paint.
+  await sleep(1500);
+  if (selector) {
+    await win.webContents.executeJavaScript(
+      `(() => {
+         const node = document.querySelector(${JSON.stringify(selector)});
+         if (node) node.scrollIntoView({ block: 'center' });
+         return Boolean(node);
+       })()`
+    );
+    await sleep(500);
+  }
+  const image = await win.webContents.capturePage();
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, image.toPNG());
+  console.log(`[wisp] settings screenshot written to ${outPath}`);
+  app.exit(0);
+}
+
 function run(command, args) {
   return new Promise((resolve) => {
     const child = spawn(command, args, { stdio: 'ignore' });
@@ -1285,6 +1318,17 @@ if (!app.requestSingleInstanceLock()) {
           console.error('[selftest] crashed:', err);
           app.exit(1);
         });
+    }
+
+    const shotAt = process.argv.indexOf('--screenshot');
+    if (shotAt !== -1) {
+      captureSettings(
+        process.argv[shotAt + 1] || path.join(settingsStore.dataDir(), 'settings.png'),
+        process.argv[shotAt + 2] || null
+      ).catch((err) => {
+        console.error('[screenshot] failed:', err);
+        app.exit(1);
+      });
     }
   });
 
