@@ -26,20 +26,20 @@ import numpy as np
 
 SAMPLE_RATE = 16000
 LEVEL_INTERVAL = 0.05  # seconds between level events
-HALLUCINATIONS = (
-    "thank you.",
-    "thanks for watching!",
-    "thank you for watching.",
-    "please subscribe",
-    "subtitles by",
-    "subs by",
-    "amara.org",
-    "subscribe to my channel",
-    "you",
-    "bye.",
-    "...",
-    "♪",
-)
+
+# Silence gating uses two independent signals, because either one alone leaks.
+# Whisper's own no_speech_prob is not one of them: measured on quiet room tone
+# it reported 0.000 while confidently emitting " um".
+SPEECH_FRAME_SECONDS = 0.02
+MIN_ACTIVE_FRAME_FRACTION = 0.01
+# Steady noise can nudge a handful of frames over the floor, so one frame must
+# also stand clearly above it. Speech always does; room tone does not. This
+# matters for latency as much as accuracy: a clip that reaches Whisper with no
+# speech burns the whole temperature-fallback schedule, about six passes.
+PEAK_FRAME_MULTIPLE = 2.0
+# Mean per-segment log probability. Measured: room tone lands near -2.4 and
+# real speech near -0.2, so -1.0 separates them with a wide margin.
+CONFIDENCE_FLOOR = -1.0
 
 # ---------------------------------------------------------------- transport
 
@@ -246,25 +246,26 @@ class Recorder:
 # ---------------------------------------------------------------- whisper
 
 
-def is_silent(audio: np.ndarray, floor: float) -> bool:
-    if audio.size < SAMPLE_RATE * 0.25:
-        return True
-    rms = float(np.sqrt(np.mean(np.square(audio))))
-    return rms < floor
+def has_speech(audio: np.ndarray, floor: float) -> bool:
+    """True when enough 20 ms frames carry real acoustic energy.
 
-
-def looks_like_hallucination(text: str, rms: float) -> bool:
-    """Whisper invents stock phrases on quiet audio. Only distrust them when
-    there is no real signal to back them up."""
-    if rms > 0.02:
+    A quiet room still has a measurable overall RMS, but every frame sits at
+    roughly the same level. Speech is bursty, so a good share of frames rise
+    well above the noise. Requiring only a small active fraction keeps quiet
+    talkers while rejecting steady room tone, which is what makes Whisper
+    invent words.
+    """
+    if audio.size < SAMPLE_RATE * 0.2:
         return False
-    stripped = text.strip().lower().strip("\"'.!?")
-    if not stripped:
-        return True
-    for phrase in HALLUCINATIONS:
-        if stripped == phrase.strip("\"'.!?"):
-            return True
-    return False
+    frame = int(SAMPLE_RATE * SPEECH_FRAME_SECONDS)
+    count = audio.size // frame
+    if count == 0:
+        return False
+    frames = audio[: count * frame].reshape(count, frame)
+    rms = np.sqrt(np.mean(np.square(frames), axis=1))
+    active = float((rms > floor).mean())
+    loudest = float(rms.max())
+    return active >= MIN_ACTIVE_FRAME_FRACTION and loudest >= floor * PEAK_FRAME_MULTIPLE
 
 
 def load_wav(path: str) -> np.ndarray:
@@ -310,7 +311,16 @@ def transcribe(audio: np.ndarray, model: str, language: str | None, vocabulary: 
     )
     elapsed = time.monotonic() - started
     text = (result.get("text") or "").strip()
-    return {"text": text, "elapsed": round(elapsed, 3), "language": result.get("language")}
+    segments = result.get("segments") or []
+    avg_logprob = (
+        float(np.mean([seg.get("avg_logprob", 0.0) for seg in segments])) if segments else 0.0
+    )
+    return {
+        "text": text,
+        "elapsed": round(elapsed, 3),
+        "language": result.get("language"),
+        "avg_logprob": round(avg_logprob, 3),
+    }
 
 
 # ---------------------------------------------------------------- session
@@ -324,7 +334,7 @@ class Session:
         self.model = "mlx-community/whisper-large-v3-turbo"
         self.language: str | None = None
         self.vocabulary = ""
-        self.silence_floor = 0.0015
+        self.silence_floor = 0.005
         self.max_seconds = 300.0
         self._auto_stop: threading.Timer | None = None
 
@@ -385,8 +395,11 @@ class Session:
 
         emit({"event": "transcribing", "duration": round(duration, 2)})
         try:
-            if is_silent(audio, self.silence_floor):
-                log(f"clip of {duration:.2f}s looks silent (rms {rms:.4f}); skipping model")
+            if not has_speech(audio, self.silence_floor):
+                log(
+                    f"clip of {duration:.2f}s has no frames above {self.silence_floor}; "
+                    f"skipping the model (rms {rms:.4f}, peak {peak:.4f})"
+                )
                 return {
                     "text": "",
                     "duration": round(duration, 2),
@@ -399,10 +412,13 @@ class Session:
             out["rms"] = round(rms, 5)
             out["peak"] = round(peak, 5)
             out["duration"] = round(duration, 2)
-            if looks_like_hallucination(out["text"], rms):
-                log(f"discarding likely hallucination: {out['text']!r}")
+            if out["text"] and out["avg_logprob"] < CONFIDENCE_FLOOR:
+                log(
+                    f"discarding low-confidence transcript "
+                    f"(avg_logprob {out['avg_logprob']}): {out['text']!r}"
+                )
                 out["text"] = ""
-                out["skipped"] = "hallucination"
+                out["skipped"] = "low_confidence"
             return out
         finally:
             with self.lock:
@@ -445,7 +461,7 @@ def handle(session: Session, msg: dict) -> None:
             info = session.start(
                 device=msg.get("device"),
                 max_seconds=float(msg.get("max_seconds", 300)),
-                silence_floor=float(msg.get("silence_floor", 0.0015)),
+                silence_floor=float(msg.get("silence_floor", 0.005)),
             )
             reply(req_id, **info)
         elif cmd == "stop":
@@ -462,11 +478,16 @@ def handle(session: Session, msg: dict) -> None:
             model = msg.get("model") or session.model
             language = msg["language"] if "language" in msg else session.language
             vocabulary = msg.get("vocabulary", session.vocabulary)
-            if is_silent(audio, 0.0):
-                reply(req_id, text="", skipped="too_short", duration=round(audio.size / SAMPLE_RATE, 2))
+            duration = round(audio.size / SAMPLE_RATE, 2)
+            if not has_speech(audio, session.silence_floor):
+                reply(req_id, text="", skipped="silence", duration=duration)
                 return
             out = transcribe(audio, model, language, vocabulary)
-            out["duration"] = round(audio.size / SAMPLE_RATE, 2)
+            out["duration"] = duration
+            if out["text"] and out["avg_logprob"] < CONFIDENCE_FLOOR:
+                log(f"discarding low-confidence transcript: {out['text']!r}")
+                out["text"] = ""
+                out["skipped"] = "low_confidence"
             reply(req_id, **out)
         elif cmd == "config":
             if msg.get("model"):

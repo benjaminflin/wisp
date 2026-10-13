@@ -102,9 +102,11 @@ The tray menu has Start/Stop, Cancel, recent transcripts, and Quit.
   loaded once and kept warm, so switching costs a reload.
 - **Custom vocabulary** — names, acronyms, and jargon that Whisper tends to
   mangle. Passed as a decoding hint, not a hard constraint.
-- **Silence floor** — clips quieter than this skip the model entirely, which
-  stops Whisper inventing phrases out of room tone. It is deliberately low so
-  real speech is never dropped; raise it only if you dictate in a noisy room.
+- **Silence floor** — the level a 20 ms frame must reach to count as speech.
+  Room tone is steady and speech is bursty, so a clip is skipped when almost
+  no frame rises above this, and a transcript Whisper is not confident about
+  is thrown away too. Together those stop it inventing phrases out of room
+  noise. Raise it only if you dictate in a noisy room.
 - **Cleanup with Qwen** — turn it off to copy Whisper's raw output verbatim.
   The "Try it" box runs the cleanup on any text so you can see what it does.
 - **Play a sound** — the start/stop blips. Turn this off if you would rather
@@ -162,7 +164,8 @@ model is not pulled. Settings shows the connection state, and the **Test
 Ollama** button lists what is available.
 
 **Whisper transcribes silence into stock phrases** — raise the silence floor a
-little.
+little. Wisp already skips clips with no speech-like frames and discards
+low-confidence transcripts, so this should be rare.
 
 ## Packaging
 

@@ -118,14 +118,14 @@
         <label class="field">
           <span>Silence floor</span>
           <span class="inline">
-            <input id="silenceFloor" type="range" min="0" max="0.02" step="0.0005" />
-            <em id="silenceFloorValue">0.0015</em>
+            <input id="silenceFloor" type="range" min="0.001" max="0.02" step="0.0005" />
+            <em id="silenceFloorValue">0.005</em>
           </span>
         </label>
         <p class="hint">
-          Clips quieter than this skip the model entirely, which stops Whisper inventing phrases out of
-          room noise. Keep it low so quiet speech is never missed; raise it only if you dictate in a
-          noisy room.
+          A short clip is skipped when almost no 20&nbsp;ms frame rises above this level, and any
+          transcript Whisper is not confident about is discarded. Room tone is steady and speech is
+          bursty, so quiet talkers still get through. Raise it only in a noisy room.
         </p>
       </section>
 

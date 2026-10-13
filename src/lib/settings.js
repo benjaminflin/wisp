@@ -40,9 +40,9 @@ const DEFAULTS = {
   whisperModel: 'mlx-community/whisper-large-v3-turbo',
   language: 'en',
   vocabulary: '',
-  // Deliberately low: dropping real speech is far worse than occasionally
-  // running Whisper on room tone, which its own no-speech check handles.
-  silenceFloor: 0.0015,
+  // Per-20ms-frame energy threshold. Steady room tone never reaches it while
+  // speech is bursty, so only a small active fraction is needed to proceed.
+  silenceFloor: 0.005,
   maxSeconds: 300,
 
   // cleanup
