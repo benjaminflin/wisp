@@ -15,6 +15,7 @@ All human-readable logging goes to stderr so stdout stays a clean channel.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import queue
 import sys
@@ -44,6 +45,24 @@ CONFIDENCE_FLOOR = -1.0
 # ---------------------------------------------------------------- transport
 
 _out: queue.Queue = queue.Queue()
+# The protocol channel, captured once. The writer uses this handle rather than
+# sys.stdout so that temporarily redirecting sys.stdout for library calls
+# cannot steal a reply.
+_STDOUT = sys.stdout
+
+
+@contextlib.contextmanager
+def quiet_stdout():
+    """Route library chatter to stderr, keeping stdout a clean JSON channel.
+
+    mlx_whisper prints "Detected language: ..." to stdout when it auto-detects,
+    even with verbose=False: the guard is `if verbose is not None`, which a
+    False value satisfies. Left alone that text interleaves with our replies,
+    and because print() writes the message and the newline separately it can
+    split a JSON line in half and hang the request that was waiting on it.
+    """
+    with contextlib.redirect_stdout(sys.stderr):
+        yield
 
 
 def emit(obj: dict) -> None:
@@ -56,8 +75,8 @@ def _writer_loop() -> None:
         if obj is None:
             break
         try:
-            sys.stdout.write(json.dumps(obj) + "\n")
-            sys.stdout.flush()
+            _STDOUT.write(json.dumps(obj) + "\n")
+            _STDOUT.flush()
         except (BrokenPipeError, ValueError):
             break
 
@@ -300,15 +319,16 @@ def transcribe(audio: np.ndarray, model: str, language: str | None, vocabulary: 
     import mlx_whisper
 
     started = time.monotonic()
-    result = mlx_whisper.transcribe(
-        audio,
-        path_or_hf_repo=model,
-        language=language,
-        initial_prompt=vocabulary or None,
-        condition_on_previous_text=False,
-        verbose=False,
-        word_timestamps=False,
-    )
+    with quiet_stdout():
+        result = mlx_whisper.transcribe(
+            audio,
+            path_or_hf_repo=model,
+            language=language,
+            initial_prompt=vocabulary or None,
+            condition_on_previous_text=False,
+            verbose=False,
+            word_timestamps=False,
+        )
     elapsed = time.monotonic() - started
     text = (result.get("text") or "").strip()
     segments = result.get("segments") or []
@@ -351,14 +371,15 @@ class Session:
         started = time.monotonic()
         self.model = model
         silence = np.zeros(SAMPLE_RATE, dtype=np.float32)
-        mlx_whisper.transcribe(
-            silence,
-            path_or_hf_repo=model,
-            language=self.language,
-            condition_on_previous_text=False,
-            verbose=False,
-            word_timestamps=False,
-        )
+        with quiet_stdout():
+            mlx_whisper.transcribe(
+                silence,
+                path_or_hf_repo=model,
+                language=self.language,
+                condition_on_previous_text=False,
+                verbose=False,
+                word_timestamps=False,
+            )
         elapsed = time.monotonic() - started
         return {"model": model, "elapsed": round(elapsed, 3)}
 

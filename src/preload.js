@@ -19,6 +19,7 @@ const api = {
   cancel: () => ipcRenderer.invoke('wisp:cancel'),
   copyTranscript: (text) => ipcRenderer.invoke('wisp:copy', text),
   clearHistory: () => ipcRenderer.invoke('wisp:clear-history'),
+  diagnostics: () => ipcRenderer.invoke('wisp:diagnostics'),
 
   openAccessibility: () => ipcRenderer.invoke('wisp:open-accessibility'),
   openExternal: (url) => ipcRenderer.invoke('wisp:open-external', url),

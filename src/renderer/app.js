@@ -200,10 +200,18 @@ function render(next) {
           ? s.ollama.error || 'unreachable'
           : 'not checked';
 
-  setDot('dotAccessibility', s.accessibility.trusted ? 'good' : 'bad');
-  el('statusAccessibility').textContent = s.accessibility.trusted
-    ? 'granted'
-    : 'not granted — the hold key will not fire';
+  const holdMode = s.settings.triggerMode !== 'toggle';
+  setDot(
+    'dotAccessibility',
+    !holdMode ? '' : s.accessibility.trusted ? (s.holdHookActive ? 'good' : 'warn') : 'bad'
+  );
+  el('statusAccessibility').textContent = !holdMode
+    ? 'not needed in tap mode'
+    : s.accessibility.trusted
+      ? s.holdHookActive
+        ? 'granted — hold key is live'
+        : 'granted, but the input hook is not running'
+      : 'not granted — the hold key is disabled';
 
   setDot('dotMic', s.mic.ok === null ? '' : s.mic.ok ? 'good' : 'bad');
   el('statusMic').textContent = s.mic.device || 'not tested';
@@ -399,6 +407,15 @@ function wire() {
   });
 
   el('btnOpenData').addEventListener('click', () => window.wisp.openExternal(`file://${snapshot.dataDir}`));
+  el('btnDiagnostics').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const report = await window.wisp.diagnostics();
+    const ok = await window.wisp.copyTranscript(report);
+    button.textContent = ok ? 'Copied' : 'Copy failed';
+    setTimeout(() => {
+      button.textContent = 'Copy diagnostics';
+    }, 1400);
+  });
   el('btnReset').addEventListener('click', async () => {
     const result = await window.wisp.resetSettings();
     settings = result.settings;
@@ -432,11 +449,7 @@ async function boot() {
       return;
     }
     if (event.type === 'state') {
-      const previousModel = snapshot?.model?.name;
       snapshot = event.state;
-      if (event.state.model.name !== previousModel) {
-        /* model changed: repopulate nothing, the select already has it */
-      }
       render(event.state);
       el('levelBar').style.width = '0%';
       if (event.state.phase === 'idle') {

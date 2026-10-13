@@ -28,6 +28,9 @@ class Worker extends EventEmitter {
     this.ready = false;
     this.lastError = null;
     this.logLines = [];
+    // Lines on stdout that were not JSON. Should always be zero; anything else
+    // means a library is writing to the protocol channel.
+    this.unparseable = 0;
   }
 
   /** Prefer the project venv; fall back to an explicit override or PATH. */
@@ -129,6 +132,7 @@ class Worker extends EventEmitter {
       try {
         msg = JSON.parse(line);
       } catch {
+        this.unparseable += 1;
         this.emit('log', `unparseable worker output: ${line.slice(0, 200)}`);
         continue;
       }

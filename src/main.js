@@ -237,6 +237,7 @@ function snapshot() {
     model: { ...state.model },
     ollama: { ...state.ollama },
     accessibility: { ...state.accessibility },
+    holdHookActive: state.holdHookActive,
     mic: { ...state.mic },
     lastResult: state.lastResult,
     history: history.map((entry) => ({
@@ -645,6 +646,28 @@ async function warmModel() {
   broadcast();
 }
 
+/**
+ * Language and vocabulary are per-call decoding options, not properties of the
+ * loaded model. Pushing them through `config` avoids reloading a 1.6 GB model
+ * every time someone edits the custom vocabulary field.
+ */
+async function syncWorkerConfig() {
+  if (!worker || !worker.ready) return;
+  const config = settingsStore.read();
+  try {
+    await worker.request(
+      'config',
+      {
+        language: config.language === 'auto' ? null : config.language,
+        vocabulary: config.vocabulary,
+      },
+      10000
+    );
+  } catch (err) {
+    console.warn('[wisp] could not update worker config:', err.message);
+  }
+}
+
 async function checkOllama() {
   const config = settingsStore.read();
   state.ollama.state = 'checking';
@@ -804,6 +827,30 @@ async function runSelfTest() {
   return failures.length === 0;
 }
 
+/** A support blob: versions, state, and the worker's recent stderr. */
+function diagnosticsReport() {
+  const s = snapshot();
+  return [
+    `Wisp ${s.version}`,
+    `electron ${process.versions.electron}  chrome ${process.versions.chrome}  node ${process.versions.node}`,
+    `platform ${process.platform} ${process.arch}` +
+      (typeof process.getSystemVersion === 'function' ? `  macOS ${process.getSystemVersion()}` : ''),
+    `data dir ${s.dataDir}`,
+    `python ${worker ? worker.resolvePython() : 'n/a'}`,
+    `worker ready=${s.worker.ready} pid=${s.worker.pid} error=${s.worker.error || 'none'}`,
+    `stdout protocol errors=${worker ? worker.unparseable : 'n/a'} (0 is expected)`,
+    `model ${s.model.state} ${s.model.name} loadSeconds=${s.model.loadSeconds}`,
+    `ollama ${s.ollama.state} error=${s.ollama.error || 'none'} models=[${(s.ollama.models || []).join(', ')}]`,
+    `accessibility trusted=${s.accessibility.trusted} holdHookActive=${s.holdHookActive}`,
+    `mic ok=${s.mic.ok} device=${s.mic.device}`,
+    `phase ${s.phase}`,
+    `settings ${JSON.stringify(s.settings)}`,
+    '',
+    '--- worker log (most recent last) ---',
+    ...(worker ? worker.recentLogs() : ['(no worker)']),
+  ].join('\n');
+}
+
 // -------------------------------------------------------------------- IPC
 
 function registerIpc() {
@@ -822,8 +869,10 @@ function registerIpc() {
     if (triggersChanged) {
       error = registerTriggers({ report: true }).error;
     }
-    if (before.whisperModel !== after.whisperModel || before.language !== after.language || before.vocabulary !== after.vocabulary) {
+    if (before.whisperModel !== after.whisperModel) {
       warmModel();
+    } else if (before.language !== after.language || before.vocabulary !== after.vocabulary) {
+      syncWorkerConfig();
     }
     if (before.launchAtLogin !== after.launchAtLogin) applyLoginItem();
     if (before.inputDevice !== after.inputDevice) {
@@ -850,6 +899,8 @@ function registerIpc() {
     await warmModel();
     return snapshot().model;
   });
+
+  ipcMain.handle('wisp:diagnostics', () => diagnosticsReport());
 
   ipcMain.handle('wisp:test-cleanup', async (_event, text) => {
     const result = await qwen.clean(text, settingsStore.read());
