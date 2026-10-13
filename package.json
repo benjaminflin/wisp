@@ -1,0 +1,27 @@
+{
+  "name": "wisp",
+  "productName": "Wisp",
+  "version": "0.1.0",
+  "description": "Local-first dictation for macOS. Hold a key, speak, and the cleaned transcript lands on your clipboard.",
+  "main": "src/main.js",
+  "author": "Ben",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "dev": "env -u ELECTRON_RUN_AS_NODE electron . --dev",
+    "settings": "env -u ELECTRON_RUN_AS_NODE electron . --settings",
+    "selftest": "env -u ELECTRON_RUN_AS_NODE electron . --selftest",
+    "smoke": "node scripts/smoke.js",
+    "setup": "bash scripts/setup.sh",
+    "dist": "electron-builder --mac",
+    "icons": "python3 scripts/make_icons.py"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "uiohook-napi": "^1.5.5"
+  }
+}

@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+    />
+    <title>Wisp Settings</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="9.2" y="3" width="5.6" height="8.6" rx="2.8" />
+          <path d="M6 11.6a6 6 0 0 0 12 0" fill="none" stroke-width="1.7" stroke-linecap="round" />
+          <path d="M12 17.6v3" fill="none" stroke-width="1.7" stroke-linecap="round" />
+        </svg>
+        <div>
+          <h1>Wisp</h1>
+          <p class="tagline">Local dictation. Hold a key, speak, paste anywhere.</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="pill" class="pill pill--idle">Idle</span>
+        <button id="btnToggle" class="primary" type="button">Start dictating</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="card span-2">
+        <h2>Status</h2>
+        <div class="status-grid">
+          <div class="status-row">
+            <span class="dot" id="dotWorker"></span>
+            <span class="status-label">Capture engine</span>
+            <span class="status-value" id="statusWorker">starting…</span>
+          </div>
+          <div class="status-row">
+            <span class="dot" id="dotModel"></span>
+            <span class="status-label">Whisper model</span>
+            <span class="status-value" id="statusModel">not loaded</span>
+          </div>
+          <div class="status-row">
+            <span class="dot" id="dotOllama"></span>
+            <span class="status-label">Ollama (Qwen)</span>
+            <span class="status-value" id="statusOllama">unknown</span>
+          </div>
+          <div class="status-row">
+            <span class="dot" id="dotAccessibility"></span>
+            <span class="status-label">Accessibility access</span>
+            <span class="status-value" id="statusAccessibility">unknown</span>
+          </div>
+          <div class="status-row">
+            <span class="dot" id="dotMic"></span>
+            <span class="status-label">Microphone</span>
+            <span class="status-value" id="statusMic">not tested</span>
+          </div>
+        </div>
+        <div class="meter" aria-hidden="true"><div class="meter-fill" id="levelBar"></div></div>
+        <div class="button-row">
+          <button id="btnReloadModel" type="button">Reload model</button>
+          <button id="btnCheckOllama" type="button">Test Ollama</button>
+          <button id="btnAccessibility" type="button">Grant accessibility</button>
+        </div>
+        <p class="hint" id="statusHint"></p>
+      </section>
+
+      <section class="card">
+        <h2>Trigger</h2>
+        <label class="field">
+          <span>Mode</span>
+          <select id="triggerMode">
+            <option value="hold">Hold a key to talk</option>
+            <option value="toggle">Tap a shortcut to start / stop</option>
+            <option value="both">Both</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Hold key</span>
+          <select id="holdKey"></select>
+        </label>
+        <label class="field">
+          <span>Toggle shortcut</span>
+          <input id="toggleShortcut" class="shortcut" type="text" readonly placeholder="Click, then press keys" />
+        </label>
+        <label class="field">
+          <span>Tap-to-latch window</span>
+          <span class="inline">
+            <input id="holdLatchMs" type="number" min="0" max="1500" step="50" />
+            <em>ms</em>
+          </span>
+        </label>
+        <p class="hint">
+          A quick tap of the hold key latches recording on; tap again to stop. Set the window to 0 to
+          disable latching. The hold key needs Accessibility access.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Transcription</h2>
+        <label class="field">
+          <span>Whisper model</span>
+          <select id="whisperModel"></select>
+        </label>
+        <label class="field">
+          <span>Language</span>
+          <select id="language">
+            <option value="en">English</option>
+            <option value="auto">Detect automatically</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Custom vocabulary</span>
+          <textarea id="vocabulary" rows="3" placeholder="Names, jargon, acronyms…"></textarea>
+        </label>
+        <label class="field">
+          <span>Silence floor</span>
+          <span class="inline">
+            <input id="silenceFloor" type="range" min="0" max="0.02" step="0.0005" />
+            <em id="silenceFloorValue">0.0015</em>
+          </span>
+        </label>
+        <p class="hint">
+          Clips quieter than this skip the model entirely, which stops Whisper inventing phrases out of
+          room noise. Keep it low so quiet speech is never missed; raise it only if you dictate in a
+          noisy room.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Cleanup with Qwen</h2>
+        <label class="check">
+          <input id="cleanupEnabled" type="checkbox" />
+          <span>Polish transcripts with a local model</span>
+        </label>
+        <label class="field">
+          <span>Ollama URL</span>
+          <input id="ollamaUrl" type="text" spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>Ollama model</span>
+          <input id="ollamaModel" type="text" list="ollamaModelList" spellcheck="false" />
+          <datalist id="ollamaModelList"></datalist>
+        </label>
+        <label class="field">
+          <span>Try it</span>
+          <textarea id="testInput" rows="2" placeholder="um so meet me at three, scratch that, four"></textarea>
+        </label>
+        <div class="button-row">
+          <button id="btnTestCleanup" type="button">Run cleanup</button>
+        </div>
+        <pre class="output" id="testOutput">—</pre>
+        <p class="hint">
+          Qwen fixes punctuation and filler words and applies spoken self-corrections such as
+          “scratch that” or “actually, make it…”. If Ollama is unreachable the raw transcript is used.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Audio &amp; output</h2>
+        <label class="field">
+          <span>Input device</span>
+          <select id="inputDevice"></select>
+        </label>
+        <label class="check">
+          <input id="copyToClipboard" type="checkbox" />
+          <span>Copy the transcript to the clipboard</span>
+        </label>
+        <label class="check">
+          <input id="playSounds" type="checkbox" />
+          <span>Play a sound when recording starts and stops</span>
+        </label>
+        <label class="check">
+          <input id="showHud" type="checkbox" />
+          <span>Show the floating status HUD</span>
+        </label>
+        <label class="field">
+          <span>Maximum clip</span>
+          <span class="inline">
+            <input id="maxSeconds" type="number" min="10" max="1800" step="10" />
+            <em>seconds</em>
+          </span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>General</h2>
+        <label class="check">
+          <input id="launchAtLogin" type="checkbox" />
+          <span>Open Wisp at login</span>
+        </label>
+        <label class="check">
+          <input id="keepTranscripts" type="checkbox" />
+          <span>Remember recent transcripts</span>
+        </label>
+        <div class="button-row">
+          <button id="btnOpenData" type="button">Show data folder</button>
+          <button id="btnReset" class="danger" type="button">Reset settings</button>
+        </div>
+        <p class="hint" id="dataPath"></p>
+      </section>
+
+      <section class="card span-2">
+        <h2>
+          Recent transcripts
+          <button id="btnClearHistory" class="link" type="button">clear</button>
+        </h2>
+        <ul class="history" id="history">
+          <li class="empty">Nothing yet. Dictate something.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

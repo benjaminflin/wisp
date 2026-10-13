@@ -1,0 +1,36 @@
+appId: dev.wisp.dictation
+productName: Wisp
+copyright: MIT
+
+directories:
+  output: dist
+  buildResources: build
+
+# Everything the app needs at runtime. Python cannot read from an asar archive,
+# so the worker and its virtualenv are shipped as unpacked resources.
+files:
+  - src/**/*
+  - assets/**/*
+  - package.json
+
+extraResources:
+  - from: python
+    to: python
+  - from: .venv
+    to: .venv
+
+asarUnpack:
+  - "**/node_modules/uiohook-napi/**"
+
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch: [arm64]
+  extendInfo:
+    NSMicrophoneUsageDescription: Wisp records your voice so it can transcribe it locally on this Mac.
+    LSBackgroundOnly: false
+
+dmg:
+  title: Wisp

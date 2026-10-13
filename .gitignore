@@ -1,0 +1,25 @@
+# Runtime and build artefacts
+.venv/
+node_modules/
+dist/
+
+# Caches kept inside the project so setup needs no system write access
+.hf/
+.pipcache/
+.npmcache/
+.electroncache/
+.electron-builder-cache/
+tmp/
+
+# Local app data when running with WISP_DATA_DIR
+.data/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Generated assets (assets/ and build/ are committed so the app runs before
+# setup.sh; regenerate them any time with: npm run icons)
+
+.DS_Store
+*.log
