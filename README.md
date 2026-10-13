@@ -184,13 +184,26 @@ low-confidence transcripts, so this should be rare.
 ## Packaging
 
 ```bash
-bash scripts/build_runtime.sh   # assembles the bundled Python runtime
-npm run dist                    # builds a DMG and a ZIP into dist/
+npm run runtime   # assembles the bundled Python runtime
+npm run dist      # builds Wisp.app and a ZIP into dist/
+npm run dmg       # packages that app into a distributable DMG
 ```
 
 For people installing the result, see [docs/INSTALL.md](docs/INSTALL.md).
 
-Two parts of this are worth understanding.
+Three parts of this are worth understanding.
+
+**The DMG is built by `scripts/make_dmg.sh`, not by electron-builder.**
+electron-builder's DMG target drives `hdiutil create`, which Apple has
+deprecated and which restricted environments refuse outright. The script does
+the same job from the lower-level pieces — `diskutil image create blank`,
+`hdiutil attach -mountpoint`, `ditto`, `hdiutil convert` — mounting inside the
+project rather than under `/Volumes` so it also works where writes are
+confined to the working directory. It uses `ditto` rather than `cp` because a
+plain copy can damage the bundle's code signature, and it verifies the
+signature both after copying and again inside the finished image. The result
+has been exercised end to end, including running the app's self test straight
+out of the mounted DMG.
 
 **The Python runtime is bundled, and it has to be relocatable.** Wisp ships its
 own interpreter, assembled from

@@ -15,7 +15,9 @@
     "smoke": "node scripts/smoke.js",
     "test:worker": ".venv/bin/python scripts/test_worker.py",
     "setup": "bash scripts/setup.sh",
+    "runtime": "bash scripts/build_runtime.sh",
     "dist": "electron-builder --mac",
+    "dmg": "bash scripts/make_dmg.sh",
     "icons": "python3 scripts/make_icons.py"
   },
   "devDependencies": {

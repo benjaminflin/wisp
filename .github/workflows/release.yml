@@ -15,12 +15,17 @@ permissions:
 
 jobs:
   macos:
-    # Wisp bundles an arm64 Python runtime and an arm64 Electron, so this must
-    # run on Apple Silicon. The step below fails loudly if it does not.
-    runs-on: macos-14
+    # Apple Silicon. Wisp bundles an arm64 Python runtime and an arm64 Electron,
+    # so this must run on arm64.
+    #
+    # The labels are a trap worth spelling out: plain `macos-15` is arm64, while
+    # `macos-15-large` and `macos-15-intel` are x64. `macos-14` was arm64 but is
+    # being retired in November 2026, so do not go back to it. The step below
+    # fails loudly rather than producing a broken x64 build.
+    runs-on: macos-15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Confirm the runner is Apple Silicon
         run: |
@@ -30,16 +35,16 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install Node dependencies
         run: npm ci
 
       - name: Build the bundled Python runtime
-        run: bash scripts/build_runtime.sh
+        run: npm run runtime
 
       - name: Verify the runtime imports what the app needs
         run: |
@@ -53,13 +58,20 @@ jobs:
           # Optional. With these set to a Developer ID certificate, the app is
           # signed and notarised, and people who download it get no Gatekeeper
           # warning. Without them the build is ad-hoc signed, which still runs
-          # but requires the right-click-Open dance on first launch.
+          # but needs the right-click-Open dance on first launch.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run dist
+
+      # Built by our own script rather than electron-builder's DMG target, which
+      # depends on the deprecated `hdiutil create` and cannot run in restricted
+      # environments. This path has been exercised end to end, including running
+      # the app's self test from inside the mounted image.
+      - name: Build the DMG
+        run: npm run dmg
 
       - name: Checksums
         run: |
@@ -70,7 +82,7 @@ jobs:
       - name: Report what was produced
         run: ls -lh dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wisp-macos-arm64
           if-no-files-found: error
@@ -81,7 +93,7 @@ jobs:
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Draft, so the notes and artefacts can be reviewed before anyone is
           # pointed at them.

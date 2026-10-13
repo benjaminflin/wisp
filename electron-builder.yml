@@ -61,25 +61,15 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
 
+  # Only the zip here. electron-builder's own DMG target drives `hdiutil
+  # create`, which Apple has deprecated and which restricted environments
+  # refuse outright. The DMG is produced by scripts/make_dmg.sh from this
+  # build instead, so every step of the pipeline is one that has actually
+  # been run end to end.
   target:
-    - target: dmg
-      arch: [arm64]
     - target: zip
       arch: [arm64]
 
   extendInfo:
     NSMicrophoneUsageDescription: Wisp records your voice so it can transcribe it locally on this Mac.
     LSBackgroundOnly: false
-
-dmg:
-  title: Wisp
-  # Standard drag-to-install layout: the app on the left, Applications on the
-  # right. electron-builder draws the background and symlink for us.
-  contents:
-    - x: 140
-      y: 165
-      type: file
-    - x: 400
-      y: 165
-      type: link
-      path: /Applications

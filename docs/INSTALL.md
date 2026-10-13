@@ -147,9 +147,10 @@ If you'd rather not trust a downloaded binary, you can build the same app:
 ```bash
 git clone https://github.com/YOUR-USERNAME/wisp
 cd wisp
-bash scripts/build_runtime.sh   # assembles the relocatable Python runtime
 npm install
-npm run dist                    # produces a DMG in dist/
+npm run runtime   # assembles the relocatable Python runtime
+npm run dist      # builds Wisp.app and a ZIP into dist/
+npm run dmg       # packages that app into a DMG
 ```
 
 The build is reproducible from source, and `npm run smoke`, `npm run test:worker`
