@@ -411,6 +411,73 @@ def transcribe(audio: np.ndarray, model: str, language: str | None, vocabulary: 
     }
 
 
+# ------------------------------------------------------------------- paste
+
+# kVK_ANSI_V, kCGEventFlagMaskCommand, kCGHIDEventTap
+_KEY_V = 9
+_CMD_FLAG = 0x00100000
+_HID_EVENT_TAP = 0
+
+_application_services = None
+
+
+def _load_application_services():
+    """Loads CoreGraphics/HIServices through ctypes.
+
+    Deliberately avoids PyObjC and `osascript`. Posting the event ourselves
+    needs only Accessibility, whereas driving System Events would also require
+    Automation permission and can raise a second, unrelated prompt.
+    """
+    global _application_services
+    if _application_services is not None:
+        return _application_services
+
+    import ctypes
+    import ctypes.util
+
+    path = ctypes.util.find_library("ApplicationServices")
+    if not path:
+        path = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+    lib = ctypes.cdll.LoadLibrary(path)
+    lib.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
+    lib.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
+    lib.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+    lib.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    lib.CFRelease.argtypes = [ctypes.c_void_p]
+    lib.AXIsProcessTrusted.restype = ctypes.c_bool
+
+    _application_services = lib
+    return lib
+
+
+def paste_into_frontmost() -> dict:
+    """Posts Cmd+V to whatever application currently has focus.
+
+    macOS silently discards synthetic events from an untrusted process, so
+    trust is checked up front. Claiming a paste that never happened would be
+    worse than saying why it did not.
+    """
+    try:
+        lib = _load_application_services()
+    except Exception as exc:
+        return {"pasted": False, "reason": "unavailable", "error": f"{type(exc).__name__}: {exc}"}
+
+    try:
+        if not lib.AXIsProcessTrusted():
+            return {"pasted": False, "reason": "accessibility_required"}
+        for key_down in (True, False):
+            event = lib.CGEventCreateKeyboardEvent(None, _KEY_V, key_down)
+            if not event:
+                return {"pasted": False, "reason": "event_creation_failed"}
+            lib.CGEventSetFlags(event, _CMD_FLAG)
+            lib.CGEventPost(_HID_EVENT_TAP, event)
+            lib.CFRelease(event)
+        return {"pasted": True}
+    except Exception as exc:
+        log(traceback.format_exc())
+        return {"pasted": False, "reason": "error", "error": f"{type(exc).__name__}: {exc}"}
+
+
 # ---------------------------------------------------------------- session
 
 
@@ -568,6 +635,8 @@ def handle(session: Session, msg: dict) -> None:
             threading.Thread(
                 target=lambda: _finish_and_reply(session, req_id), daemon=True
             ).start()
+        elif cmd == "paste":
+            reply(req_id, **paste_into_frontmost())
         elif cmd == "cancel":
             reply(req_id, **session.cancel())
         elif cmd == "transcribe":

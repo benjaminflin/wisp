@@ -54,6 +54,10 @@ const DEFAULTS = {
   // audio & output
   inputDevice: null,
   copyToClipboard: true,
+  // Off by default: pasting into the focused app is intrusive, and it also
+  // needs Accessibility access on top of what the hold key already asks for.
+  autoPaste: false,
+  pasteDelayMs: 120,
   playSounds: true,
   showHud: true,
 
@@ -118,6 +122,8 @@ function sanitize(raw, base = DEFAULTS) {
     out.inputDevice = input.inputDevice;
   }
   bool('copyToClipboard');
+  bool('autoPaste');
+  out.pasteDelayMs = clampNumber(input.pasteDelayMs, 0, 2000, base.pasteDelayMs);
   bool('playSounds');
   bool('showHud');
 

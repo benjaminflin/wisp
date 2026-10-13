@@ -313,6 +313,8 @@ function applySettingsToForm(s) {
   put('ollamaModel', s.ollamaModel);
   put('inputDevice', s.inputDevice === null ? '' : String(s.inputDevice));
   put('copyToClipboard', s.copyToClipboard, 'checked');
+  put('autoPaste', s.autoPaste, 'checked');
+  put('pasteDelayMs', s.pasteDelayMs);
   put('playSounds', s.playSounds, 'checked');
   put('showHud', s.showHud, 'checked');
   put('launchAtLogin', s.launchAtLogin, 'checked');
@@ -387,6 +389,8 @@ function wire() {
   bind('ollamaUrl', 'ollamaUrl');
   bind('ollamaModel', 'ollamaModel');
   bind('copyToClipboard', 'copyToClipboard', { type: 'checkbox' });
+  bind('autoPaste', 'autoPaste', { type: 'checkbox' });
+  bind('pasteDelayMs', 'pasteDelayMs', { type: 'number' });
   bind('playSounds', 'playSounds', { type: 'checkbox' });
   bind('showHud', 'showHud', { type: 'checkbox' });
   bind('launchAtLogin', 'launchAtLogin', { type: 'checkbox' });

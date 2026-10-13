@@ -594,11 +594,22 @@ async function finishTranscript(raw, meta = {}) {
     console.warn('[wisp] clipboard write did not stick; the transcript is still in Recent transcripts.');
   }
 
+  // Optionally deliver it straight into whatever the user is typing in. This
+  // has to come after the clipboard write, because that is what Cmd+V pastes.
+  let paste = null;
+  if (config.autoPaste && !suppressClipboard) {
+    paste = copied
+      ? await deliverWithPaste(config)
+      : { pasted: false, reason: 'clipboard_unavailable' };
+  }
+
   state.lastResult = {
     text,
     raw,
     edited: Boolean(cleanup.edited),
     copied,
+    pasted: Boolean(paste && paste.pasted),
+    pasteReason: paste ? paste.reason : null,
     reason: cleanup.reason,
     transcriptMs: meta.transcriptMs,
     audioSeconds: meta.audioSeconds,
@@ -611,11 +622,32 @@ async function finishTranscript(raw, meta = {}) {
     transcriptMs: meta.transcriptMs,
   });
 
-  if (!config.copyToClipboard) setPhase('idle', 'Transcribed.');
-  else if (copied) setPhase('idle', 'Copied to clipboard.');
-  else setPhase('idle', 'Transcribed, but the clipboard refused the write.');
+  setPhase('idle', outcomeHint(config, copied, paste));
 
   return state.lastResult;
+}
+
+/** What to tell the user about where their words actually ended up. */
+function outcomeHint(config, copied, paste) {
+  if (!config.copyToClipboard) return 'Transcribed.';
+  if (!copied) return 'Transcribed, but the clipboard refused the write.';
+  if (!config.autoPaste) return 'Copied to clipboard.';
+  if (paste && paste.pasted) return 'Pasted into the active app.';
+  if (paste && paste.reason === 'accessibility_required') {
+    return 'Copied — auto-paste needs Accessibility access.';
+  }
+  return `Copied — auto-paste did not run (${(paste && paste.reason) || 'unknown'}).`;
+}
+
+/** Waits a beat, then asks the worker to post Cmd+V. */
+async function deliverWithPaste(config) {
+  if (config.pasteDelayMs) await sleep(config.pasteDelayMs);
+  if (!worker || !worker.ready) return { pasted: false, reason: 'engine_restarting' };
+  try {
+    return await worker.request('paste', {}, 8000);
+  } catch (err) {
+    return { pasted: false, reason: 'engine_error', error: err.message };
+  }
 }
 
 async function cancelRecording() {

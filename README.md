@@ -60,7 +60,7 @@ so if you start it from a terminal inside an editor, the editor gets asked.
 | Permission | Needed for | Grant it to |
 | --- | --- | --- |
 | **Microphone** | recording your voice — always required | the app you launch Wisp from: Wisp itself once packaged, or Terminal.app / iTerm.app when using `npm start` |
-| **Accessibility** | the hold-a-key trigger only | the same app. Not needed at all if you use tap-to-toggle |
+| **Accessibility** | the hold-a-key trigger, and auto-paste | the same app. Not needed at all if you use tap-to-toggle and leave auto-paste off |
 
 A note on Accessibility: it allows an app to observe and control input
 system-wide, which is a broad grant. It is only used here to notice that your
@@ -102,6 +102,11 @@ The tray menu has Start/Stop, Cancel, recent transcripts, and Quit.
   loaded once and kept warm, so switching costs a reload.
 - **Custom vocabulary** — names, acronyms, and jargon that Whisper tends to
   mangle. Passed as a decoding hint, not a hard constraint.
+- **Paste into the active app** — off by default. When on, Wisp copies as usual
+  and then sends ⌘V, so the words land in whatever you are typing in. It needs
+  Accessibility access; without it the transcript still reaches your clipboard
+  and Settings says why the paste was skipped. The **paste delay** is a short
+  pause before the ⌘V, in case the app you are pasting into needs a moment.
 - **Silence floor** — the level a 20 ms frame must reach to count as speech.
   Three independent checks stand between you and a transcript invented from
   nothing: the clip needs frames clearly above this floor, its loud parts must

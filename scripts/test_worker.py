@@ -115,11 +115,35 @@ def test_gates():
     check("a voiced, bursty signal is accepted", reason is None, str(reason))
 
 
+def test_paste_bindings():
+    """Checks the CoreGraphics bindings without ever posting an event.
+
+    Deliberately does not call paste_into_frontmost(): on a machine where
+    Accessibility is already granted that would really paste into whatever the
+    user has focused, which a test has no business doing.
+    """
+    print("\nauto-paste bindings")
+    try:
+        lib = ww._load_application_services()
+    except Exception as exc:
+        check("CoreGraphics loads through ctypes with no new dependency", False, str(exc))
+        return
+    check("CoreGraphics loads through ctypes with no new dependency", lib is not None)
+
+    trusted = lib.AXIsProcessTrusted()
+    check(
+        "trust is checked before posting, so a no-op is never reported as a paste",
+        isinstance(trusted, bool),
+        f"AXIsProcessTrusted()={bool(trusted)}",
+    )
+
+
 def main():
     print("\n\x1b[1mWisp worker tests\x1b[0m")
     test_close_stream()
     test_recorder_keeps_audio()
     test_gates()
+    test_paste_bindings()
 
     failed = [name for name, ok in RESULTS if not ok]
     print(

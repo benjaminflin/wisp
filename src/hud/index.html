@@ -144,7 +144,11 @@
         } else {
           const last = state.lastResult;
           if (last && last.text) {
-            label.textContent = last.copied === false ? 'Clipboard blocked' : 'Copied to clipboard';
+            label.textContent = last.pasted
+              ? 'Pasted'
+              : last.copied === false
+                ? 'Clipboard blocked'
+                : 'Copied to clipboard';
             sub.textContent = last.text.length > 42 ? `${last.text.slice(0, 42)}…` : last.text;
           } else if (last) {
             label.textContent = 'Nothing heard';

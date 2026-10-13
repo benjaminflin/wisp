@@ -171,6 +171,21 @@
           <span>Copy the transcript to the clipboard</span>
         </label>
         <label class="check">
+          <input id="autoPaste" type="checkbox" />
+          <span>Paste it into the active app automatically</span>
+        </label>
+        <label class="field">
+          <span>Paste delay</span>
+          <span class="inline">
+            <input id="pasteDelayMs" type="number" min="0" max="2000" step="20" />
+            <em>ms</em>
+          </span>
+        </label>
+        <p class="hint">
+          Auto-paste sends ⌘V to whatever app is focused, so the words land where you are typing. It
+          needs Accessibility access; without it the transcript still reaches your clipboard.
+        </p>
+        <label class="check">
           <input id="playSounds" type="checkbox" />
           <span>Play a sound when recording starts and stops</span>
         </label>
