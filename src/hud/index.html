@@ -136,8 +136,19 @@
           label.textContent = state.latchArmed ? 'Listening — latched' : 'Listening…';
           sub.textContent = state.latchArmed ? 'Tap the key again to stop' : 'Release to transcribe';
         } else if (phase === 'transcribing') {
-          label.textContent = 'Transcribing…';
-          sub.textContent = 'Whisper is working';
+          const model = state.model || {};
+          if (model.state === 'downloading') {
+            // The first run fetches weights, which is slow enough that the
+            // reason matters more than the word "Transcribing".
+            label.textContent = 'Downloading model…';
+            sub.textContent =
+              model.progress && model.progress.pct != null
+                ? `${model.progress.pct}% — one time only`
+                : 'one time only';
+          } else {
+            label.textContent = 'Transcribing…';
+            sub.textContent = 'Whisper is working';
+          }
         } else if (phase === 'error') {
           label.textContent = 'Problem';
           sub.textContent = state.hint || '';

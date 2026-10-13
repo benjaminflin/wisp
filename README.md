@@ -184,17 +184,47 @@ low-confidence transcripts, so this should be rare.
 ## Packaging
 
 ```bash
-npm run dist
+bash scripts/build_runtime.sh   # assembles the bundled Python runtime
+npm run dist                    # builds a DMG and a ZIP into dist/
 ```
 
-`electron-builder` produces a `.dmg` in `dist/`. The Python worker and its
-virtualenv ship as unpacked resources because Python cannot read from an asar
-archive. The build is unsigned, so macOS will still attribute microphone and
-accessibility permissions to the terminal you launch it from unless you sign
-it.
+For people installing the result, see [docs/INSTALL.md](docs/INSTALL.md).
 
-The Whisper weights are deliberately not bundled — a packaged app downloads
-them on first use into the usual Hugging Face cache.
+Two parts of this are worth understanding.
+
+**The Python runtime is bundled, and it has to be relocatable.** Wisp ships its
+own interpreter, assembled from
+[python-build-standalone](https://github.com/astral-sh/python-build-standalone),
+rather than a virtualenv. A virtualenv records the absolute path of the
+interpreter that created it, so it works on the build machine and nowhere else.
+The standalone build derives its prefix from the location of its own executable,
+so the whole tree can be moved into the app bundle and then onto someone else's
+Mac. `scripts/build_runtime.sh` also removes torch, which `mlx-whisper` declares
+but only uses for converting PyTorch checkpoints — dropping it takes ~580 MB out
+of every download.
+
+**Signing is the difference between "download and run" and "right-click Open".**
+The default build is ad-hoc signed with the hardened runtime and an entitlements
+file. `com.apple.security.cs.disable-library-validation` is required, not
+optional: the bundled MLX dylib is not signed by your team, and the hardened
+runtime would otherwise refuse to load it and the app would die on launch. An
+ad-hoc build runs locally, but Gatekeeper still rejects a copy that someone
+downloads.
+
+To produce one that opens cleanly, provide a Developer ID and rebuild:
+
+| Variable | Purpose |
+| --- | --- |
+| `CSC_LINK` | path or base64 of your Developer ID `.p12` |
+| `CSC_KEY_PASSWORD` | its password |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | notarisation |
+
+`.github/workflows/release.yml` reads the same names from repository secrets, so
+pushing a `v*` tag builds on an Apple Silicon runner and attaches a signed,
+notarised DMG to a draft release.
+
+The Whisper weights are deliberately not bundled — a packaged app downloads them
+on first use, and both Settings and the HUD show the progress while it happens.
 
 ## Layout
 
@@ -207,9 +237,13 @@ src/lib/qwen.js          Ollama client, cleanup prompt, output guards
 src/renderer/            settings window
 src/hud/                 floating status indicator
 python/wisp_worker.py    CoreAudio capture + Whisper, JSON-lines over stdio
-scripts/setup.sh         one-time environment setup
-scripts/smoke.js         headless pipeline test
+scripts/build_runtime.sh assembles the relocatable Python that ships in the app
+scripts/setup.sh         one-time setup for a development checkout
 scripts/make_icons.py    generates every icon from signed distance fields
+scripts/smoke.js         headless pipeline test
+scripts/test_worker.py   silence triage, teardown watchdog, paste bindings
+docs/INSTALL.md          install guide for people downloading the app
+.github/workflows/       release build
 ```
 
 ## Privacy

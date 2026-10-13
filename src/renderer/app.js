@@ -182,13 +182,17 @@ function render(next) {
     ? `ready · pid ${s.worker.pid ?? '—'}`
     : s.worker.error || 'starting…';
 
-  setDot('dotModel', s.model.state === 'loaded' ? 'good' : s.model.state === 'loading' ? 'warn' : '');
+  const modelName = s.model.name.split('/').pop();
+  const downloadPct = s.model.progress && s.model.progress.pct;
+  setDot('dotModel', s.model.state === 'loaded' ? 'good' : s.model.state === 'unloaded' ? '' : 'warn');
   el('statusModel').textContent =
     s.model.state === 'loaded'
-      ? `${s.model.name.split('/').pop()} · loaded in ${s.model.loadSeconds ?? '?'}s`
-      : s.model.state === 'loading'
-        ? `loading ${s.model.name.split('/').pop()}…`
-        : 'not loaded';
+      ? `${modelName} · loaded in ${s.model.loadSeconds ?? '?'}s`
+      : s.model.state === 'downloading'
+        ? `downloading ${modelName}${downloadPct != null ? ` — ${downloadPct}%` : '…'}`
+        : s.model.state === 'loading'
+          ? `loading ${modelName}…`
+          : 'not loaded';
 
   setDot('dotOllama', s.ollama.state === 'ok' ? 'good' : s.ollama.state === 'error' ? 'bad' : 'warn');
   el('statusOllama').textContent =

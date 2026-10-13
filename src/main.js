@@ -58,7 +58,12 @@ const state = {
   holdStartedAt: 0,
   hint: '',
   worker: { ready: false, pid: null, error: null },
-  model: { state: 'unloaded', name: settingsStore.DEFAULTS.whisperModel, loadSeconds: null },
+  model: {
+    state: 'unloaded',
+    name: settingsStore.DEFAULTS.whisperModel,
+    loadSeconds: null,
+    progress: null,
+  },
   ollama: { state: 'unknown', models: [], error: null },
   accessibility: { trusted: false, target: null },
   holdHookActive: false,
@@ -232,7 +237,15 @@ function hintFor() {
     return 'Ollama is not reachable, so transcripts are copied unedited. Start it with: ollama serve';
   }
   if (state.worker.ready && state.model.state === 'loaded') return 'Ready. Hold your key and speak.';
-  if (state.model.state === 'loading') return `Loading ${state.model.name.split('/').pop()}… the first run downloads the model.`;
+  if (state.model.state === 'downloading') {
+    const pct = state.model.progress && state.model.progress.pct;
+    return pct != null
+      ? `Downloading the Whisper model — ${pct}%. This happens once, then dictation is instant.`
+      : 'Downloading the Whisper model. This happens once.';
+  }
+  if (state.model.state === 'loading') {
+    return `Loading ${state.model.name.split('/').pop()}…`;
+  }
   return state.hint;
 }
 
@@ -667,6 +680,7 @@ async function warmModel() {
   const config = settingsStore.read();
   state.model.state = 'loading';
   state.model.name = config.whisperModel;
+  state.model.progress = null;
   broadcast();
   try {
     const info = await worker.request(
@@ -1149,6 +1163,25 @@ function wireWorker() {
   });
 
   worker.on('level', (msg) => sendLevel(msg.rms));
+
+  // Downloading is not the same as loading: the first is a one-time 1.6 GB wait
+  // that deserves a percentage, the second takes a few seconds.
+  worker.on('model', (msg) => {
+    if (msg.state === 'downloading') {
+      state.model.state = 'downloading';
+      state.model.progress = null;
+      broadcast();
+    } else if (msg.state === 'loading') {
+      state.model.state = 'loading';
+      broadcast();
+    }
+  });
+
+  worker.on('model_progress', (msg) => {
+    state.model.state = 'downloading';
+    state.model.progress = { pct: msg.pct, downloaded: msg.downloaded, total: msg.total };
+    broadcast();
+  });
 
   worker.on('recording', (msg) => {
     if (msg.state === 'started') {

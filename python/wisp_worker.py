@@ -481,11 +481,75 @@ def paste_into_frontmost() -> dict:
 # ---------------------------------------------------------------- session
 
 
+def model_cache_root() -> str:
+    return os.environ.get("HF_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache", "huggingface"
+    )
+
+
+def model_is_cached(repo: str) -> bool:
+    """Whether the weights are already on disk.
+
+    Lets the app say "downloading 1.6 GB" rather than "loading", which look
+    identical to a user staring at a spinner for the first few minutes.
+    """
+    snapshots = os.path.join(
+        model_cache_root(), "hub", "models--" + repo.replace("/", "--"), "snapshots"
+    )
+    try:
+        with os.scandir(snapshots) as entries:
+            return any(entries)
+    except OSError:
+        return False
+
+
+def prefetch_model(repo: str) -> None:
+    """Downloads the weights with progress reported to the app.
+
+    mlx_whisper would fetch these itself on first use, but silently and with no
+    way to tell a slow download from a hang. Doing it here means a one-time
+    1.6 GB wait can show how far along it is.
+    """
+    try:
+        from huggingface_hub import snapshot_download
+        from tqdm import tqdm as _tqdm
+    except Exception:  # pragma: no cover - mlx_whisper still fetches it itself
+        log("progress reporting unavailable; mlx_whisper will download silently")
+        return
+
+    class ProgressTqdm(_tqdm):
+        _last_emit = 0.0
+
+        def update(self, n=1):
+            result = super().update(n)
+            now = time.monotonic()
+            if now - ProgressTqdm._last_emit >= 0.5:
+                ProgressTqdm._last_emit = now
+                total = float(getattr(self, "total", 0) or 0)
+                emit(
+                    {
+                        "event": "model_progress",
+                        "downloaded": int(getattr(self, "n", 0) or 0),
+                        "total": int(total),
+                        "pct": round(100.0 * self.n / total, 1) if total else None,
+                    }
+                )
+            return result
+
+    with quiet_stdout():
+        snapshot_download(repo_id=repo, tqdm_class=ProgressTqdm)
+
+
 class Session:
     def __init__(self) -> None:
         self.recorder = Recorder()
         self.state = "idle"  # idle | recording | transcribing
         self.lock = threading.Lock()
+        # Serialises loading and using the weights. Without it, a dictation
+        # arriving while the warm-up is still running loads a second copy of
+        # the model into memory, roughly doubling the footprint at the worst
+        # possible moment.
+        self.model_lock = threading.Lock()
         self.teardown_failed = False
         self.model = "mlx-community/whisper-large-v3-turbo"
         self.language: str | None = None
@@ -501,23 +565,33 @@ class Session:
             self._auto_stop = None
 
     def warm(self, model: str) -> dict:
-        """Load the model now so the first real dictation is not slow."""
+        """Fetch if necessary, then load, so the first dictation is not slow."""
         import mlx_whisper
 
         started = time.monotonic()
         self.model = model
-        silence = np.zeros(SAMPLE_RATE, dtype=np.float32)
-        with quiet_stdout():
-            mlx_whisper.transcribe(
-                silence,
-                path_or_hf_repo=model,
-                language=self.language,
-                condition_on_previous_text=False,
-                verbose=False,
-                word_timestamps=False,
-            )
+
+        with self.model_lock:
+            cached = model_is_cached(model)
+            if not cached:
+                emit({"event": "model", "state": "downloading", "model": model})
+                log(f"{model} is not cached; downloading weights")
+                prefetch_model(model)
+            emit({"event": "model", "state": "loading", "model": model})
+
+            silence = np.zeros(SAMPLE_RATE, dtype=np.float32)
+            with quiet_stdout():
+                mlx_whisper.transcribe(
+                    silence,
+                    path_or_hf_repo=model,
+                    language=self.language,
+                    condition_on_previous_text=False,
+                    verbose=False,
+                    word_timestamps=False,
+                )
+
         elapsed = time.monotonic() - started
-        return {"model": model, "elapsed": round(elapsed, 3)}
+        return {"model": model, "elapsed": round(elapsed, 3), "downloaded": not cached}
 
     # -- commands --------------------------------------------------------
     def start(self, device: int | None, max_seconds: float, silence_floor: float) -> dict:
@@ -571,7 +645,10 @@ class Session:
                     "elapsed": 0.0,
                     "skipped": reason,
                 }
-            out = transcribe(audio, self.model, self.language, self.vocabulary)
+            # Waits for any in-flight download or warm-up rather than loading a
+            # second copy of the weights alongside it.
+            with self.model_lock:
+                out = transcribe(audio, self.model, self.language, self.vocabulary)
             out["rms"] = round(rms, 5)
             out["peak"] = round(peak, 5)
             out["duration"] = round(duration, 2)
@@ -652,7 +729,8 @@ def handle(session: Session, msg: dict) -> None:
             if reason:
                 reply(req_id, text="", skipped=reason, duration=duration)
                 return
-            out = transcribe(audio, model, language, vocabulary)
+            with session.model_lock:
+                out = transcribe(audio, model, language, vocabulary)
             out["duration"] = duration
             if out["text"] and out["avg_logprob"] < CONFIDENCE_FLOOR:
                 log(f"discarding low-confidence transcript: {out['text']!r}")
