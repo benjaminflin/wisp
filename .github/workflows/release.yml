@@ -76,7 +76,20 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run dist
+        run: |
+          # A secret that is not configured arrives as an empty string, and
+          # electron-builder treats an empty CSC_LINK as a path to a
+          # certificate file. It resolves that to the project directory and
+          # dies with "not a file", which is what broke the first run. Remove
+          # the variables outright when they have no value so it falls back to
+          # ad-hoc signing.
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "$name is not configured; leaving it unset"
+              unset "$name"
+            fi
+          done
+          npm run dist
 
       # Built by our own script rather than electron-builder's DMG target, which
       # depends on the deprecated `hdiutil create` and cannot run in restricted

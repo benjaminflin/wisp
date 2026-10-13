@@ -16,7 +16,7 @@
     "test:worker": ".venv/bin/python scripts/test_worker.py",
     "setup": "bash scripts/setup.sh",
     "runtime": "bash scripts/build_runtime.sh",
-    "dist": "electron-builder --mac",
+    "dist": "electron-builder --mac --publish never",
     "dmg": "bash scripts/make_dmg.sh",
     "icons": "python3 scripts/make_icons.py"
   },
