@@ -133,6 +133,7 @@ cleanup never costs you the transcript.
 
 ```bash
 npm run smoke        # worker + Whisper + Qwen, no Electron
+npm run test:worker  # silence triage and audio-teardown resilience
 npm run selftest     # full app: model, cleanup, clipboard, history
 ```
 
@@ -156,6 +157,13 @@ inside constrained environments; a normal launch needs neither flag.
 **Nothing is transcribed** — check the **Microphone** row in Settings. If the
 level meter does not move while you speak, the wrong input device is selected
 or permission was denied.
+
+**It hangs on "Transcribing…"** — this was a PortAudio/CoreAudio deadlock while
+closing the microphone, not a slow transcription. Wisp now walks away from a
+teardown that has not finished in a few seconds, still hands you the transcript
+it had already captured, and restarts the capture engine on its own. You may
+see a brief note in Settings while it comes back, and the next dictation takes a
+few seconds longer while the model reloads.
 
 **The hold key does nothing** — Accessibility access is not granted for the app
 that launched Wisp. See [Permissions](#permissions).

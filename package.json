@@ -13,6 +13,7 @@
     "settings": "env -u ELECTRON_RUN_AS_NODE electron . --settings",
     "selftest": "env -u ELECTRON_RUN_AS_NODE electron . --selftest",
     "smoke": "node scripts/smoke.js",
+    "test:worker": ".venv/bin/python scripts/test_worker.py",
     "setup": "bash scripts/setup.sh",
     "dist": "electron-builder --mac",
     "icons": "python3 scripts/make_icons.py"

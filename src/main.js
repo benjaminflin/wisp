@@ -64,6 +64,7 @@ const state = {
   holdHookActive: false,
   mic: { ok: null, device: null },
   lastResult: null,
+  engineNote: '',
 };
 
 let history = [];
@@ -222,6 +223,7 @@ function rebuildTray() {
 
 function hintFor() {
   if (state.worker.error) return `Capture engine problem: ${state.worker.error}`;
+  if (state.engineNote) return state.engineNote;
   if (state.phase === 'error') return state.hint;
   if (!state.accessibility.trusted && settingsStore.read().triggerMode !== 'toggle') {
     return 'The hold key needs Accessibility access — use the button above, then restart Wisp.';
@@ -553,7 +555,7 @@ async function stopRecording(trigger) {
 
   let result;
   try {
-    result = await worker.request('stop', {}, 5 * 60 * 1000);
+    result = await worker.request('stop', {}, 180 * 1000);
   } catch (err) {
     setPhase('error', `Transcription failed: ${err.message}`);
     setTimeout(() => setPhase('idle'), 3000);
@@ -1079,8 +1081,20 @@ function wireWorker() {
     state.worker.ready = true;
     state.worker.pid = msg.pid;
     state.worker.error = null;
+    state.engineNote = '';
     refreshDevices();
     warmModel();
+    broadcast();
+  });
+
+  // The worker exits itself when a CoreAudio teardown wedges, because the
+  // process can never use audio again after that. It replies with the
+  // transcript first, then goes; the restart above brings back a clean one.
+  worker.on('restart_needed', (msg) => {
+    state.engineNote =
+      msg.reason === 'audio_teardown_timeout'
+        ? 'The audio engine stalled and is restarting — that transcript still made it. Give it a few seconds.'
+        : 'The audio engine is restarting.';
     broadcast();
   });
 

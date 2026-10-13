@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import queue
 import sys
 import threading
@@ -51,6 +52,8 @@ SPECTRAL_FLATNESS_MAX = 0.45
 # overlaps with hallucination, so this gate cannot be tightened without
 # discarding legitimate one-word dictation. It is a backstop, not the main net.
 CONFIDENCE_FLOOR = -1.0
+# How long to wait for a CoreAudio stream to tear down before abandoning it.
+STREAM_TEARDOWN_TIMEOUT = 3.0
 
 # ---------------------------------------------------------------- transport
 
@@ -153,6 +156,38 @@ def _resample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
         return np.interp(dst_x, src_x, audio).astype(np.float32)
 
 
+def _close_stream(stream, timeout: float, hard: bool = False) -> bool:
+    """Stops and closes a CoreAudio stream, never blocking forever.
+
+    Pa_StopStream can deadlock against CoreAudio's own IO thread. Sampled
+    stacks from a real hang show FinishStoppingStream waiting on HALB_Mutex
+    while the IO thread sits in PortAudio's startStopCallback waiting on a
+    recursive mutex inside AudioUnitGetProperty. Nothing on this side of the
+    API can avoid that, and the bundled PortAudio (V19.7.0-devel) is the
+    version with the defect, so the teardown is watched and abandoned rather
+    than trusted.
+    """
+    finished = threading.Event()
+
+    def teardown() -> None:
+        try:
+            if hard:
+                stream.abort()
+            else:
+                stream.stop()
+            stream.close()
+        except Exception as exc:  # pragma: no cover - device teardown races
+            log(f"stream teardown raised: {exc}")
+        finally:
+            finished.set()
+
+    threading.Thread(target=teardown, daemon=True, name="wisp-teardown").start()
+    if finished.wait(timeout):
+        return True
+    log(f"audio teardown did not finish within {timeout}s; abandoning the stream")
+    return False
+
+
 class Recorder:
     """Microphone capture that streams level events while it runs."""
 
@@ -232,19 +267,17 @@ class Recorder:
         self._active = True
         emit({"event": "recording", "state": "started", "device": info.get("name"), "rate": rate})
 
-    def stop(self) -> tuple[np.ndarray, float, float, float]:
-        """Returns (audio_16k_mono, duration_seconds, rms, peak)."""
+    def stop(self, timeout: float = STREAM_TEARDOWN_TIMEOUT):
+        """Returns (audio_16k_mono, duration, rms, peak, teardown_ok)."""
         if not self._active or self._stream is None:
-            return np.zeros(0, dtype=np.float32), 0.0, 0.0, 0.0
+            return np.zeros(0, dtype=np.float32), 0.0, 0.0, 0.0, True
+
         self._active = False
         stream, self._stream = self._stream, None
-        try:
-            stream.stop()
-            stream.close()
-        except Exception as exc:  # pragma: no cover - device teardown races
-            log(f"stream teardown: {exc}")
-
         duration = time.monotonic() - self._started_at
+
+        # Take the audio *before* touching CoreAudio. Once it is in hand, a
+        # stuck teardown cannot cost the user their words.
         with self._lock:
             chunks = self._chunks
             self._chunks = []
@@ -252,24 +285,22 @@ class Recorder:
             sumsq = self._sumsq
             count = self._count
 
+        teardown_ok = _close_stream(stream, timeout)
+
         if not chunks:
-            return np.zeros(0, dtype=np.float32), duration, 0.0, 0.0
+            return np.zeros(0, dtype=np.float32), duration, 0.0, 0.0, teardown_ok
         audio = np.concatenate(chunks).astype(np.float32)
         rms = float(np.sqrt(sumsq / count)) if count else 0.0
         audio = _resample(audio, self._device_rate, SAMPLE_RATE)
-        return audio, duration, rms, peak
+        return audio, duration, rms, peak, teardown_ok
 
-    def abort(self) -> None:
-        if self._stream is not None:
-            try:
-                self._stream.abort()
-                self._stream.close()
-            except Exception:
-                pass
-        self._stream = None
+    def abort(self, timeout: float = 1.5) -> None:
+        stream, self._stream = self._stream, None
         self._active = False
         with self._lock:
             self._chunks = []
+        if stream is not None:
+            _close_stream(stream, timeout, hard=True)
 
 
 # ---------------------------------------------------------------- whisper
@@ -388,6 +419,7 @@ class Session:
         self.recorder = Recorder()
         self.state = "idle"  # idle | recording | transcribing
         self.lock = threading.Lock()
+        self.teardown_failed = False
         self.model = "mlx-community/whisper-large-v3-turbo"
         self.language: str | None = None
         self.vocabulary = ""
@@ -449,7 +481,12 @@ class Session:
                 raise RuntimeError(f"cannot stop while {self.state}")
             self._cancel_auto_stop()
             self.state = "transcribing"
-            audio, duration, rms, peak = self.recorder.stop()
+
+        # Deliberately outside the lock. A CoreAudio teardown can wedge forever
+        # (see _close_stream), and holding the lock across it would freeze every
+        # other thread in this process along with it.
+        audio, duration, rms, peak, teardown_ok = self.recorder.stop()
+        self.teardown_failed = not teardown_ok
 
         emit({"event": "transcribing", "duration": round(duration, 2)})
         try:
@@ -485,17 +522,21 @@ class Session:
 
     def cancel(self) -> dict:
         with self.lock:
+            if self.state != "recording":
+                # finish() has already detached the stream, so aborting here
+                # would race a teardown that is already in flight.
+                return {"state": self.state}
             self._cancel_auto_stop()
-            self.recorder.abort()
             self.state = "idle"
+        self.recorder.abort()
         emit({"event": "recording", "state": "cancelled"})
         return {"state": "idle"}
 
     def shutdown(self) -> None:
         with self.lock:
             self._cancel_auto_stop()
-            self.recorder.abort()
             self.state = "idle"
+        self.recorder.abort()
 
 
 # ---------------------------------------------------------------- dispatch
@@ -572,7 +613,17 @@ def handle(session: Session, msg: dict) -> None:
 
 def _finish_and_reply(session: Session, req_id) -> None:
     try:
-        reply(req_id, **session.finish())
+        result = session.finish()
+        reply(req_id, **result)
+        if session.teardown_failed:
+            # This process is now holding a CoreAudio lock it will never
+            # release, so nothing audio-related will work again. The reply is
+            # already queued; let the writer flush it, then hand the problem to
+            # the parent, which respawns a clean worker automatically.
+            emit({"event": "restart_needed", "reason": "audio_teardown_timeout"})
+            time.sleep(0.4)
+            log("exiting after a stuck audio teardown; the app will restart a clean worker")
+            os._exit(0)
     except Exception as exc:
         log(traceback.format_exc())
         reply(req_id, ok=False, error=f"{type(exc).__name__}: {exc}")
@@ -584,7 +635,7 @@ def main() -> int:
     emit(
         {
             "event": "ready",
-            "pid": __import__("os").getpid(),
+            "pid": os.getpid(),
             "sample_rate": SAMPLE_RATE,
             "python": sys.version.split()[0],
         }

@@ -178,6 +178,9 @@ class Worker extends EventEmitter {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`worker timed out after ${Math.round(timeoutMs / 1000)}s on '${cmd}'`));
+        // A wedged worker does not recover on its own; without this, every
+        // later request fails the same way and the app looks permanently dead.
+        this.recycle(`timeout waiting for '${cmd}'`);
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       try {
@@ -188,6 +191,30 @@ class Worker extends EventEmitter {
         reject(err);
       }
     });
+  }
+
+  /**
+   * Kills the worker so the supervisor starts a clean one. Used when a request
+   * times out, which in practice means the process is stuck in a native call
+   * it will never return from.
+   */
+  recycle(reason) {
+    const proc = this.proc;
+    if (!proc) return;
+    this.emit('log', `recycling worker: ${reason}`);
+    this.ready = false;
+    this.proc = null;
+    for (const entry of this.pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error(`worker recycled: ${reason}`));
+    }
+    this.pending.clear();
+    try {
+      proc.kill('SIGKILL');
+    } catch {
+      /* already gone */
+    }
+    // The 'exit' handler schedules the replacement.
   }
 
   async stop() {
