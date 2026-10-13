@@ -121,12 +121,19 @@ async function main() {
         ['-o', wav, '--data-format=LEI16@16000', '--file-format=WAVE', SPOKEN],
         { timeout: 30000 }
       );
-      const result = await worker.request('transcribe', { path: wav, language: 'en' }, 10 * 60 * 1000);
+      // language: null exercises the auto-detect path, which is the one that
+      // used to leak "Detected language: ..." onto the protocol channel.
+      const result = await worker.request('transcribe', { path: wav, language: null }, 10 * 60 * 1000);
       transcript = (result.text || '').trim();
       check(
         'transcribes speech from an audio file',
         transcript.length > 0,
         transcript ? `"${transcript.slice(0, 64)}${transcript.length > 64 ? '…' : ''}"` : 'empty transcript'
+      );
+      check(
+        'worker stdout stays a clean JSON channel',
+        worker.unparseable === 0,
+        `${worker.unparseable} stray line(s)`
       );
       if (result.elapsed) console.log(`     audio ${result.duration}s -> text in ${result.elapsed}s`);
     } catch (err) {
