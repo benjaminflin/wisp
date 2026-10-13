@@ -1,20 +1,11 @@
 [
   {
-    "id": "1791910402112-oksjld",
-    "at": "2026-10-13T16:53:22.112Z",
+    "id": "1791915554101-qk9k9q",
+    "at": "2026-10-13T18:19:14.101Z",
     "text": "Book the studio for Tuesday at 11am.",
     "raw": "Book the studio for Monday at 9am. Scratch that. Tuesday at 11am.",
     "edited": true,
     "audioSeconds": 4.75,
-    "transcriptMs": 1071
-  },
-  {
-    "id": "1791910398049-1agt61",
-    "at": "2026-10-13T16:53:18.049Z",
-    "text": "when dead and injured.",
-    "raw": "when dead and injured.",
-    "edited": false,
-    "audioSeconds": 0.78,
-    "transcriptMs": 1044
+    "transcriptMs": 1231
   }
 ]

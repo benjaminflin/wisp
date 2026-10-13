@@ -3,6 +3,11 @@
 node_modules/
 dist/
 
+# The bundled Python runtime and its download cache are build outputs, not
+# source. build/icon.png and build/entitlements.mac.plist are committed.
+build/python-runtime/
+build/cache/
+
 # Caches kept inside the project so setup needs no system write access
 .hf/
 .pipcache/

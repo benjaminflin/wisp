@@ -16,10 +16,11 @@ const path = require('path');
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 class Worker extends EventEmitter {
-  constructor({ projectRoot, hfHome = null }) {
+  constructor({ projectRoot, hfHome = null, pythonPath = null }) {
     super();
     this.projectRoot = projectRoot;
     this.hfHome = hfHome;
+    this.pythonPath = pythonPath;
     this.proc = null;
     this.pending = new Map();
     this.nextId = 1;
@@ -34,10 +35,17 @@ class Worker extends EventEmitter {
     this.unparseable = 0;
   }
 
-  /** Prefer the project venv; fall back to an explicit override or PATH. */
+  /** Prefer an explicit path, then the bundled runtime, then a dev venv. */
   resolvePython() {
     const candidates = [
+      this.pythonPath,
       process.env.WISP_PYTHON,
+      // What a downloaded copy of Wisp uses: a relocatable interpreter shipped
+      // inside the app bundle.
+      path.join(this.projectRoot, 'python-runtime', 'bin', 'python3'),
+      // The same runtime during development, straight from the build output.
+      path.join(this.projectRoot, 'build', 'python-runtime', 'bin', 'python3'),
+      // Development checkouts that predate the bundled runtime.
       path.join(this.projectRoot, '.venv', 'bin', 'python'),
       path.join(this.projectRoot, 'venv', 'bin', 'python'),
     ].filter(Boolean);

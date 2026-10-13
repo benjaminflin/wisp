@@ -1,0 +1,93 @@
+name: Release
+
+# Builds the downloadable macOS app. Pushing a v* tag attaches the DMG and ZIP
+# to a draft GitHub release; the manual trigger just produces build artefacts so
+# a branch can be tested without tagging.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    # Wisp bundles an arm64 Python runtime and an arm64 Electron, so this must
+    # run on Apple Silicon. The step below fails loudly if it does not.
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Confirm the runner is Apple Silicon
+        run: |
+          uname -m
+          if [ "$(uname -m)" != "arm64" ]; then
+            echo "::error::Wisp needs an arm64 runner; this one is $(uname -m)"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build the bundled Python runtime
+        run: bash scripts/build_runtime.sh
+
+      - name: Verify the runtime imports what the app needs
+        run: |
+          build/python-runtime/bin/python3 - <<'PY'
+          import numpy, sounddevice, mlx_whisper  # noqa: F401
+          print("runtime ok")
+          PY
+
+      - name: Package the app
+        env:
+          # Optional. With these set to a Developer ID certificate, the app is
+          # signed and notarised, and people who download it get no Gatekeeper
+          # warning. Without them the build is ad-hoc signed, which still runs
+          # but requires the right-click-Open dance on first launch.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run dist
+
+      - name: Checksums
+        run: |
+          cd dist
+          shasum -a 256 *.dmg *.zip > SHASUMS256.txt
+          cat SHASUMS256.txt
+
+      - name: Report what was produced
+        run: ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wisp-macos-arm64
+          if-no-files-found: error
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHASUMS256.txt
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          # Draft, so the notes and artefacts can be reviewed before anyone is
+          # pointed at them.
+          draft: true
+          generate_release_notes: true
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHASUMS256.txt

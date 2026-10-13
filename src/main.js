@@ -1106,8 +1106,26 @@ function resolveHfHome() {
   return path.join(settingsStore.dataDir(), 'models');
 }
 
+/**
+ * The interpreter to run the worker with. A downloaded copy of Wisp carries a
+ * relocatable Python inside the bundle; a development checkout may have built
+ * the same runtime into build/, or may still be using a virtualenv.
+ */
+function resolveRuntimePython() {
+  if (process.env.WISP_PYTHON) return process.env.WISP_PYTHON;
+  const candidates = [
+    path.join(process.resourcesPath || '', 'python-runtime', 'bin', 'python3'),
+    path.join(PROJECT_ROOT, 'build', 'python-runtime', 'bin', 'python3'),
+  ].filter((candidate) => candidate && fs.existsSync(candidate));
+  return candidates[0] || null;
+}
+
 function wireWorker() {
-  worker = new Worker({ projectRoot: RESOURCE_ROOT, hfHome: resolveHfHome() });
+  worker = new Worker({
+    projectRoot: RESOURCE_ROOT,
+    hfHome: resolveHfHome(),
+    pythonPath: resolveRuntimePython(),
+  });
 
   worker.on('ready', (msg) => {
     state.worker.ready = true;

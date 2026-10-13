@@ -7,25 +7,32 @@ directories:
   buildResources: build
 
 # Everything the app needs at runtime. Python cannot read from an asar archive,
-# so the worker and its virtualenv are shipped as unpacked resources.
+# so the worker script and its interpreter are shipped as unpacked resources.
 files:
   - src/**/*
   - assets/**/*
   - package.json
 
 extraResources:
+  # The worker script itself.
   - from: python
     to: python
     filter:
       - "**/*"
       - "!**/__pycache__/**"
       - "!**/*.pyc"
-  - from: .venv
-    to: .venv
+  # A relocatable CPython produced by scripts/build_runtime.sh. A virtualenv is
+  # deliberately not used: it records the absolute path of the interpreter that
+  # created it, which breaks on any machine that is not the build machine.
+  - from: build/python-runtime
+    to: python-runtime
     filter:
       - "**/*"
       - "!**/__pycache__/**"
       - "!**/*.pyc"
+      - "!**/test/**"
+      - "!**/tests/**"
+      - "!**/*.dist-info/RECORD"
 
 asarUnpack:
   - "**/node_modules/uiohook-napi/**"
@@ -41,15 +48,38 @@ electronDist: node_modules/electron/dist
 mac:
   category: public.app-category.productivity
   icon: build/icon.png
-  # zip is the default because it builds anywhere. dmg is the nicer artefact
-  # for sharing; add it back if you want it, but hdiutil must be able to mount
-  # a disk image, which restricted environments forbid.
+
+  # "-" is an ad-hoc signature. Apple Silicon refuses to execute a completely
+  # unsigned binary, so this is the floor, not the goal: it lets the app run on
+  # the machine that built it and on one where the user has allowed it. Set
+  # CSC_LINK/CSC_KEY_PASSWORD or CSC_NAME to a Developer ID and Wisp will be
+  # signed and notarised instead, which is what removes the Gatekeeper warning
+  # for people who simply download it.
+  identity: "-"
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
   target:
+    - target: dmg
+      arch: [arm64]
     - target: zip
       arch: [arm64]
+
   extendInfo:
     NSMicrophoneUsageDescription: Wisp records your voice so it can transcribe it locally on this Mac.
     LSBackgroundOnly: false
 
 dmg:
   title: Wisp
+  # Standard drag-to-install layout: the app on the left, Applications on the
+  # right. electron-builder draws the background and symlink for us.
+  contents:
+    - x: 140
+      y: 165
+      type: file
+    - x: 400
+      y: 165
+      type: link
+      path: /Applications
